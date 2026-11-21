@@ -68,5 +68,20 @@ class Prekrytie(unittest.TestCase):
         self.assertEqual(cur, {"Izba Jedáleň": 22.5})
 
 
+class CielHned(unittest.TestCase):
+    def test_potvrdeny_ciel_sa_ukaze_hned(self):
+        import agent, app, json, os, sqlite3, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            db = os.path.join(d, "tc.db")
+            agent._live_value({"TC_DB": db}, "Cieľová izbová teplota", 23.5, now=2000)
+            meta = dict(sqlite3.connect(db).execute("SELECT k, v FROM meta"))
+            self.assertEqual(json.loads(meta["live:Cieľová izbová teplota"]), {"v": 23.5, "ts": 2000})
+            cur = app.live_overlay(meta, {"Cieľová izbová teplota": 23.0}, ["Cieľová izbová teplota"], 1990, 2010)
+            self.assertEqual(cur["Cieľová izbová teplota"], 23.5)
+            # novšia vzorka zberača má prednosť
+            cur = app.live_overlay(meta, {"Cieľová izbová teplota": 23.5}, ["Cieľová izbová teplota"], 2060, 2070)
+            self.assertEqual(cur["Cieľová izbová teplota"], 23.5)
+
+
 if __name__ == "__main__":
     unittest.main()

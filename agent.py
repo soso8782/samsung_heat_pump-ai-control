@@ -484,6 +484,23 @@ def parse_room_target(value, lang="sk"):
     return round(x * 2) / 2
 
 
+def _live_value(cfg, entity, value, now=None):
+    """Potvrdenú novú hodnotu zapíše ako `live:<entita>` do meta zberača, aby ju web aj Home Assistant ukázali hneď,
+    bez čakania na ďalšiu vzorku zberača. Ďalšia vzorka ju prirodzene nahradí (app.live_overlay). Chyba sa ignoruje."""
+    import sqlite3
+    try:
+        tc = sqlite3.connect(cfg["TC_DB"], timeout=10)
+        try:
+            tc.execute("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)")
+            tc.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                       ("live:" + entity, json.dumps({"v": float(value), "ts": int(now or time.time())})))
+            tc.commit()
+        finally:
+            tc.close()
+    except Exception:
+        pass
+
+
 def set_room_target(cfg, c, value, who, lang="sk"):
     """Nastaví cieľovú izbovú teplotu (jediná cesta: web správcu aj chat). V DRY_RUN sa do ESP nezapisuje.
     Zapíše riadok do actions aj runs. Vracia {"old","new","dry"}; ValueError = neplatný vstup, RuntimeError = zápis zlyhal."""
@@ -506,6 +523,8 @@ def set_room_target(cfg, c, value, who, lang="sk"):
     except Exception as e:
         err = tr("srv.run.write_err", hl, e=e)
     ok = err is None
+    if ok and not dry:
+        _live_value(cfg, ROOM_TARGET_ENT, v)
     c.execute("INSERT INTO actions(ts,entity,old,new,reason,applied,result) VALUES(?,?,?,?,?,?,?)",
               (now, ROOM_TARGET_ENT, old, v, reason, 1 if ok else 0,
                (tr("srv.run.dry", hl) if dry else tr("srv.run.written", hl)) if ok else err))
@@ -1821,4 +1840,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

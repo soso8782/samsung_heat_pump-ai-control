@@ -9,6 +9,9 @@ Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla
   zapíše do `runs` záznam bez stavu; `GET /api/ha/v1/state` teraz berie `agent.stav`, `zhrnutie` a `posledny_beh`
   z posledného skutočného hodnotenia agenta (`stav` ok / pozor / problem), nie z posledného záznamu. `app.status`
   pridáva `last_assessment`. Test v `test_ha_api.py`.
+- **Nová cieľová izbová teplota sa ukáže hneď.** Po potvrdenom zápise do ESP sa hodnota zapíše ako `live:` do meta
+  zberača (`agent._live_value`), takže web aj Home Assistant ju zobrazia okamžite, nie až po ďalšej vzorke zberača.
+  Test v `test_mqtt_izby.py`.
 
 ## [2.10.0] – 2026-11-21
 
