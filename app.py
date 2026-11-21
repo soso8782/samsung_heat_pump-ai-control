@@ -150,12 +150,15 @@ def status(cfg, role="admin", email=None, lang="sk"):
     cost_day = c.execute("SELECT coalesce(sum(cost),0), count(*) FROM runs WHERE ts>=?", (mid,)).fetchone()
     cost_30 = c.execute("SELECT coalesce(sum(cost),0) FROM runs WHERE ts>=?", (now - 30 * 86400,)).fetchone()[0]
     last_run = enrich_actions(c, [run_row(last)])[0] if last else None
+    # Posledné hodnotenie agenta: záznamy „info“ (zmena cieľa, režimu, sezóny…) nemajú stav, nesmú ho prekryť.
+    ev = c.execute("SELECT %s FROM runs WHERE stav IN ('ok','pozor','problem') ORDER BY ts DESC LIMIT 1" % RUN_COLS).fetchone()
+    last_assessment = run_row(ev) if ev else None
     out = {"role": role, "email": email,
            "now": now, "mode": get_state(c, "mode", "advise"), "running": get_state(c, "running") == "1",
            "next_run": float(get_state(c, "next_run", "0") or 0), "model": cfg["OPENROUTER_MODEL"],
            "key_set": bool(cfg["OPENROUTER_API_KEY"]), "interval": int(cfg["INTERVAL_MIN"] or 60),
            "avg_cost": c.execute("SELECT avg(cost) FROM (SELECT cost FROM runs WHERE status='ok' AND cost>0 ORDER BY ts DESC LIMIT 24)").fetchone()[0],
-           "key_hint": ("…" + cfg["OPENROUTER_API_KEY"][-4:]) if len(cfg["OPENROUTER_API_KEY"]) > 12 else "", "last_run": last_run,
+           "key_hint": ("…" + cfg["OPENROUTER_API_KEY"][-4:]) if len(cfg["OPENROUTER_API_KEY"]) > 12 else "", "last_run": last_run, "last_assessment": last_assessment,
            "cost_today": cost_day[0], "runs_today": cost_day[1], "cost_30d": cost_30,
            "limits": {k: {"min": v[0], "max": v[1], "krok": v[2], "hodin": v[3]} for k, v in ALLOWED.items()}}
     # nové polia (SPEC – kontrakt)

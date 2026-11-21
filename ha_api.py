@@ -159,6 +159,10 @@ def build_state(st, now=None, names=None, version=None):
         tuv = {"teplota": _round(teplota), "ciel": _round(ciel), "ohrev_bezi": bool(ts.get("active") or dh.get("boosted"))}
 
     lr = st.get("last_run") if isinstance(st.get("last_run"), dict) else {}
+    # Stav a zhrnutie agenta berieme z posledného hodnotenia; informačný záznam (napr. zmena cieľa z HA) ho nemaže.
+    la = st.get("last_assessment") if isinstance(st.get("last_assessment"), dict) else None
+    if la is None:
+        la = lr
     err = val("chyba")
     poplachy = []
     for a in st.get("alerts") or []:
@@ -183,8 +187,8 @@ def build_state(st, now=None, names=None, version=None):
         "kompresor": {"frekvencia": _round(freq, 0), "bezi": None if freq is None else freq > 0,
                       "odmrazovanie": _truthy(defr)},
         "tuv": tuv,
-        "agent": {"rezim": st.get("mode") if st.get("mode") in MODES else None, "posledny_beh": lr.get("ts"),
-                  "stav": lr.get("stav"), "zhrnutie": lr.get("summary"),
+        "agent": {"rezim": st.get("mode") if st.get("mode") in MODES else None, "posledny_beh": la.get("ts"),
+                  "stav": la.get("stav"), "zhrnutie": la.get("summary"),
                   "dalsi_beh": int(nxt) if nxt else None},
         "chyba_tc": None if err is None else int(err),
         "poplachy": poplachy,

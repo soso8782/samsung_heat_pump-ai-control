@@ -2,6 +2,14 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.10.1] – 2026-11-21
+
+### Opravené
+- **Stav agenta v Home Assistante už nie je „unknown“ po informačnom zázname.** Zmena cieľovej teploty, režimu či sezóny
+  zapíše do `runs` záznam bez stavu; `GET /api/ha/v1/state` teraz berie `agent.stav`, `zhrnutie` a `posledny_beh`
+  z posledného skutočného hodnotenia agenta (`stav` ok / pozor / problem), nie z posledného záznamu. `app.status`
+  pridáva `last_assessment`. Test v `test_ha_api.py`.
+
 ## [2.10.0] – 2026-11-21
 
 ### Pridané

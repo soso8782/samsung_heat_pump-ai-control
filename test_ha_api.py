@@ -82,6 +82,13 @@ class Stav(unittest.TestCase):
         self.assertEqual(s["poplachy"], [{"druh": "okno", "text": "Okno otvorené"}])
         self.assertEqual(s["online"], {"esp": True, "zberac": True, "ha": True})
 
+    def test_info_zaznam_nemaze_stav_agenta(self):
+        st = sample()
+        st["last_run"] = {"ts": 1700000300, "status": "info", "stav": None, "summary": "Cieľová izbová teplota zmenená"}
+        st["last_assessment"] = {"ts": 1700000100, "status": "ok", "stav": "pozor", "summary": "Obývačka pod minimom."}
+        a = ha_api.build_state(st, 1)["agent"]
+        self.assertEqual((a["stav"], a["zhrnutie"], a["posledny_beh"]), ("pozor", "Obývačka pod minimom.", 1700000100))
+
     def test_bez_tuv(self):
         self.assertIsNone(ha_api.build_state(sample(tuv=False), 1)["tuv"])
 
