@@ -717,6 +717,13 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
     <div class="sub usr" id="userlast" style="margin-top:14px" hidden></div>
   </section>
 
+  <section class="panel pad" id="awaypanel" hidden>
+    <div class="head"><h2 data-i18n="prehlad.utlm_titul">Preč z domu</h2><span class="sub" id="awaystate" role="status"></span></div>
+    <p class="sub" data-i18n="prehlad.utlm_popis">Zníži cieľ na úsporný a vráti ho tak, aby bolo doma teplo v čas návratu.</p>
+    <div class="form"><label for="awayuntil" data-i18n="prehlad.utlm_navrat">Návrat (nepovinné)</label><input type="datetime-local" id="awayuntil"></div>
+    <div class="btnrow"><button class="btn primary" type="button" id="awaygo" data-i18n="prehlad.utlm_odist">Odchádzam</button><button class="btn" type="button" id="awaystop" data-i18n="prehlad.utlm_zrusit" hidden>Som doma</button><span id="awaymsg" class="sub" role="status"></span></div>
+  </section>
+
   <div class="two">
     <section class="panel pad chat" id="chatpanel">
       <div class="head"><h2><span class="adm" data-i18n="agent.spravy_agentovi">Správy agentovi</span><span class="usr" data-i18n="agent.titul">Agent</span></h2><span class="sub adm" data-i18n="agent.napis_adm">Napíš, čo si spravil ručne, alebo sa opýtaj</span><span class="sub usr" data-i18n="agent.napis_usr">Napíš, akú teplotu chceš (napr. ‚v detskej chcem 23‘), alebo sa opýtaj.</span></div>
@@ -1220,6 +1227,25 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
         <p class="eyebrow" style="margin-bottom:4px" data-i18n="nastavenia.vsetky_zariadenia">Všetky zariadenia</p>
         <div id="pushdevlist"></div>
       </div>
+    </section>
+
+    <section class="panel pad sgroup">
+      <h3 data-i18n="nastavenia.utlm_titul">Nočný útlm a Preč z domu</h3>
+      <p class="sub" data-i18n="nastavenia.utlm_popis">Cez noc zníži cieľ izbovej teploty a ráno ho vráti s predstihom, ktorý sa učí z histórie. Obe funkcie sú predvolene vypnuté.</p>
+      <form id="utform" class="form" autocomplete="off">
+        <div class="tgrid">
+          <div class="form"><label for="utmode" data-i18n="nastavenia.utlm_noc">Nočný útlm</label><select id="utmode"><option value="off" data-i18n="nastavenia.utlm_off">Vypnuté</option><option value="advise" data-i18n="nastavenia.utlm_advise">Len odporúčať</option><option value="control" data-i18n="nastavenia.utlm_control">Riadiť</option></select></div>
+          <div class="form"><label for="utdelta" data-i18n="nastavenia.utlm_delta">Útlm (°C, 0 až 2)</label><input id="utdelta" type="number" min="0" max="2" step="0.5"></div>
+          <div class="form"><label for="utstart" data-i18n="nastavenia.utlm_start">Začiatok útlmu</label><input id="utstart" type="time"></div>
+          <div class="form"><label for="utwake" data-i18n="nastavenia.utlm_wake">Budenie (po–pi)</label><input id="utwake" type="time"></div>
+          <div class="form"><label for="utwakewe" data-i18n="nastavenia.utlm_wake_we">Budenie (víkend)</label><input id="utwakewe" type="time"></div>
+          <div class="form"><label for="utprec" data-i18n="nastavenia.utlm_prec">Preč z domu</label><select id="utprec"><option value="off" data-i18n="nastavenia.utlm_off">Vypnuté</option><option value="advise" data-i18n="nastavenia.utlm_advise">Len odporúčať</option><option value="control" data-i18n="nastavenia.utlm_control">Riadiť</option></select></div>
+          <div class="form"><label for="utaway" data-i18n="nastavenia.utlm_away_value">Cieľ pri odchode (°C)</label><input id="utaway" type="number" min="15" max="30" step="0.5"></div>
+          <div class="form"><label for="utha" data-i18n="nastavenia.utlm_ha">Entita prítomnosti v HA (nepovinné)</label><input id="utha" type="text" placeholder="group.rodina" maxlength="200"></div>
+        </div>
+        <div class="btnrow"><button class="btn primary" type="submit" data-i18n="nastavenia.utlm_ulozit">Uložiť</button><span id="utmsg" class="sub" role="status"></span></div>
+      </form>
+      <div class="sub" id="utinfo" style="margin-top:8px"></div>
     </section>
 
     <section class="panel pad sgroup">
@@ -2597,7 +2623,7 @@ async function loadStatus() {
   const cnt = nLlm != null || nRut != null ? t("agent.dnes_modelrutina", {a: nLlm ?? 0, b: nRut ?? 0}) : t("agent.dnes_n", {n: s.runs_today});
   $("#agentinfo").textContent = `${String(s.model || "").split("/").pop()} · ${cnt} · ${t("agent.centa", {v: ((s.cost_today || 0) * 100).toFixed(2).replace(".", DECIMAL)})}`;
   if (!document.querySelector("#last .undoask")) $("#last").innerHTML = s.last_run ? runHtml(s.last_run, false, true) : `<div class="empty">${t("agent.zatial_nebezal")}</div>`;
-  renderSettingsStatus(s);
+  renderSettingsStatus(s); renderUtlm(s);
   abPill(s.abtest);
   renderSeason(s); renderHa(s.ha); renderHaInt(s.ha_api); renderMcp(s.mcp); renderTunnel(s.tunnel); renderBadges(s);
   const bal = s.balance, cr = $("#credit");
@@ -2879,6 +2905,45 @@ function renderSettingsStatus(s) {
   const w = d.window, wt = w ? (w.date && w.date !== todayStr() ? tr("nastavenia.dhw_okno_z", {d: w.date}) : tr("nastavenia.dhw_dnes")) + tr("nastavenia.dhw_cas", {a: fmtT(w.start), b: fmtT(w.end)}) : tr("nastavenia.dhw_nenaplanovane");
   ds.textContent = (d.enabled ? wt : tr("nastavenia.dhw_vypnuty") + (w ? wt : "")) + (d.boosted ? tr("nastavenia.dhw_prebieha") + (d.base != null ? tr("nastavenia.dhw_povodne", {v: f(d.base)}) : "") + "." : (d.enabled ? tr("nastavenia.dhw_neprebieha") : ""));
 }
+/* Nočný útlm a Preč z domu (api/utlm): panel „Preč z domu“ na Prehľade (obe roly) a nastavenia (správca) */
+const utWhen = ts => ts ? `${new Date(ts * 1000).toLocaleDateString(LOCALE, {day: "numeric", month: "numeric"})} ${hm(ts)}` : "";
+function renderUtlm(s) {
+  const u = s && s.utlm, pn = $("#awaypanel"); if (!pn) return;
+  const on = !!u && u.prec_mode !== "off"; pn.hidden = !on;
+  if (u) {
+    const st = u.state === "ramp" ? "ramp" : u.state, away = u.away;
+    $("#awaystate").textContent = tr("prehlad.utlm_stav_" + st) + (u.state === "away" && away && away.until ? " · " + utWhen(away.until) : "")
+      + (u.next_change && u.state !== "away" ? " · " + tr("prehlad.utlm_dalsia", {v: utWhen(u.next_change)}) : "");
+    $("#awaystop").hidden = !away; $("#awaygo").hidden = !!away; $("#awayuntil").disabled = !!away;
+    if (on && u.prec_mode === "advise" && !$("#awaymsg").textContent) $("#awaymsg").textContent = tr("prehlad.utlm_len_radi");
+  }
+  const form = $("#utform"); if (!form || !u || !u.cfg) return;
+  if (!form.contains(document.activeElement) && !window.__utDirty) {
+    $("#utmode").value = u.mode; $("#utprec").value = u.prec_mode; $("#utdelta").value = Math.abs(u.cfg.delta);
+    $("#utstart").value = u.cfg.start; $("#utwake").value = u.cfg.wake; $("#utwakewe").value = u.cfg.wake_we;
+    $("#utaway").value = u.cfg.away_value; $("#utha").value = u.ha_pritomnost || "";
+  }
+  const r = u.rate, lines = [];
+  if (r) lines.push(tr(r.fallback ? "nastavenia.utlm_rate_fb" : "nastavenia.utlm_rate", {v: f(r.rate, 2), n: r.n}));
+  if (u.ramp_start && u.feature === "night") lines.push(tr("nastavenia.utlm_ramp", {v: hm(u.ramp_start), l: f(u.lead_h, 1)}));
+  if (u.reduced) lines.push(tr(u.note === "reduced0" ? "nastavenia.utlm_vynechany" : "nastavenia.utlm_znizene", {v: f(u.depth, 1)}));
+  lines.push(tr("nastavenia.utlm_stav", {v: tr("prehlad.utlm_stav_" + u.state)}));
+  $("#utinfo").textContent = lines.join(" ");
+}
+$("#utform").addEventListener("input", () => { window.__utDirty = 1; });
+$("#utform").onsubmit = guard(async e => { e.preventDefault(); say("#utmsg", t("spolocne.ukladam"));
+  const r = await api("api/utlm", {mode: $("#utmode").value, prec_mode: $("#utprec").value, delta: -Math.abs(Number($("#utdelta").value || 0)),
+    start: $("#utstart").value, wake: $("#utwake").value, wake_we: $("#utwakewe").value, away_value: $("#utaway").value, ha_pritomnost: $("#utha").value.trim()});
+  if (r.error) return say("#utmsg", r.error, false);
+  window.__utDirty = 0; say("#utmsg", t("nastavenia.utlm_ulozene"), true); await loadStatus(); }, "#utmsg");
+$("#awaygo").onclick = guard(async () => { const v = $("#awayuntil").value; say("#awaymsg", t("spolocne.ukladam"));
+  const r = await api("api/utlm", {action: "away", until: v || null});
+  if (r.error) return say("#awaymsg", r.error, false);
+  say("#awaymsg", t("prehlad.utlm_ulozene"), true); await loadStatus(); }, "#awaymsg");
+$("#awaystop").onclick = guard(async () => { say("#awaymsg", t("spolocne.ukladam")); const r = await api("api/utlm", {action: "cancel"});
+  if (r.error) return say("#awaymsg", r.error, false);
+  say("#awaymsg", t("prehlad.utlm_ulozene"), true); await loadStatus(); }, "#awaymsg");
+
 $("#dhwplan").onchange = guard(async () => { const cb = $("#dhwplan"), want = cb.checked; cb.disabled = true; say("#dhwmsg", t("spolocne.ukladam"));
   const r = await api("api/settings", {dhw_plan: want}); cb.disabled = false;
   if (r.error) { cb.checked = !want; say("#dhwmsg", r.error, false); return; }

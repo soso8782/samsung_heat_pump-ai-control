@@ -3,6 +3,7 @@
 import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request, urllib.error
 import profil
 import i18n
+import utlm
 from i18n import tr, tn
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -25,8 +26,10 @@ PBKDF2_ITER = 200000
 # Zmena cieľovej izbovej teploty (web správcu aj chat používateľa idú cez agent.set_room_target): po úspešnej zmene sa vo vlákne
 # pošle upozornenie `cielova_zmena` všetkým zariadeniam. agent.py sa nemení - funkcia sa obalí tu (chat volá agent.set_room_target
 # cez globálnu premennú modulu agent, takže obal platí aj pre chat).
-def _set_room_target_notify(cfg, c, value, who, lang="sk"):
-    res = _orig_set_room_target(cfg, c, value, who, lang)
+def _set_room_target_notify(cfg, c, value, who, lang="sk", reason=None):
+    res = _orig_set_room_target(cfg, c, value, who, lang, reason)
+    if reason:   # automatika (útlm, Preč z domu) neposiela upozornenie všetkým zariadeniam
+        return res
     try:
         threading.Thread(target=notify.target_changed, args=(dict(cfg), res.get("old"), res.get("new"), who),
                          name="notify-cielova-zmena", daemon=True).start()
@@ -167,6 +170,10 @@ def status(cfg, role="admin", email=None, lang="sk"):
     except ValueError:
         out["alerts"] = []
     out["targets"] = get_targets(c)
+    try:
+        out["utlm"] = utlm.status_block(cfg, c, now, admin=True)
+    except Exception:
+        out["utlm"] = None
     out["notify"] = notify.status(cfg, c)
     win = dhw.today_window(c)
     boosted = get_state(c, "dhw_boosted", "0") == "1"
@@ -256,6 +263,10 @@ def status_user(cfg, role, email, lang="sk"):
             out["tuv"] = dhw.manual_status(c)
         except Exception:
             out["tuv"] = {"active": False, "until": None, "target": None, "base": None, "last": None}
+        try:
+            out["utlm"] = utlm.status_block(cfg, c, now, admin=False)
+        except Exception:
+            out["utlm"] = None
     finally:
         c.close()
     out["profil_info"] = profil_info(cfg)
@@ -520,6 +531,60 @@ def room_target_post(cfg, body, who, lang="sk"):
     if res["dry"]:
         out["note"] = tr("srv.app.dry_hodnota", lang)
     return 200, out
+
+
+def utlm_post(cfg, body, role, lang="sk"):
+    """POST /api/utlm. Správca: {mode, prec_mode, delta, start, wake, wake_we, away_value, ha_pritomnost}. Správca aj používateľ:
+    {action: "away", until: "YYYY-MM-DD HH:MM"|null} a {action: "cancel"} (hodnotu „Preč“ určuje správca v nastaveniach)."""
+    now = int(time.time())
+    c = adb(cfg)
+    try:
+        act = body.get("action")
+        if act == "away":
+            try:
+                until = utlm.parse_until(body.get("until"), now)
+            except ValueError:
+                return 400, {"error": tr("srv.utlm.zly_navrat", lang)}
+            ok, text = utlm.away_start(cfg, c, until, now, "manual", lang)
+            if not ok:
+                return 409, {"error": text}
+        elif act == "cancel":
+            utlm.away_cancel(c)
+        elif act is not None:
+            return 400, {"error": tr("srv.utlm.zla_akcia", lang)}
+        else:
+            if role != "admin":
+                return 403, NO_PERM
+            upd = {}
+            for k, key in (("mode", "utlm_mode"), ("prec_mode", "prec_mode")):
+                if body.get(k) is not None:
+                    if body[k] not in utlm.MODES:
+                        return 400, {"error": tr("srv.utlm.zly_rezim", lang)}
+                    upd[key] = body[k]
+            err, new = utlm.validate_cfg(body, utlm.load_cfg(c), lang)
+            if err:
+                return 400, {"error": err}
+            cfg_upd = {}
+            if body.get("ha_pritomnost") is not None:
+                ents = [e.strip() for e in str(body["ha_pritomnost"]).split(",") if e.strip()]
+                if len(ents) > 5 or any(not utlm.ENT_RE.match(e) for e in ents):
+                    return 400, {"error": tr("srv.utlm.zla_entita", lang)}
+                cfg_upd["HA_PRITOMNOST"] = ",".join(ents)
+            if not upd and not cfg_upd and new == utlm.load_cfg(c) and not any(body.get(k) is not None for k in ("delta", "start", "wake", "wake_we", "away_value")):
+                return 400, {"error": tr("srv.app.nic_na_ulozenie", lang)}
+            utlm.save_cfg_state(c, new)
+            for k, v in upd.items():
+                set_state(c, k, v)
+            if cfg_upd:
+                save_cfg(cfg_upd)
+                cfg.update(cfg_upd)
+        try:
+            utlm.tick(cfg, c, now)   # zmena sa prejaví hneď, nie až po minúte
+        except Exception:
+            pass
+        return 200, {"ok": True, "utlm": utlm.status_block(cfg, c, now, admin=(role == "admin"))}
+    finally:
+        c.close()
 
 
 def user_target_post(cfg, body, email, lang="sk"):
@@ -1330,8 +1395,8 @@ def session_valid(c, tok):
 
 
 LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
-USER_GET = ("/api/status", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
-USER_POST = ("/api/message", "/api/user_target", "/api/tuv_boost", "/api/logout", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test", "/api/push/remove")
+USER_GET = ("/api/status", "/api/utlm", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
+USER_POST = ("/api/message", "/api/user_target", "/api/utlm", "/api/tuv_boost", "/api/logout", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test", "/api/push/remove")
 NO_PERM = {"error": "Na túto akciu nemáš oprávnenie."}
 
 
@@ -1849,6 +1914,12 @@ class H(BaseHTTPRequestHandler):
                 return self.send(403, {"error": tr("srv.app.no_perm", lang)})
             if u.path == "/api/status":
                 return self.send(200, status(cfg, role, email, lang))
+            if u.path == "/api/utlm":
+                ca = adb(cfg)
+                try:
+                    return self.send(200, utlm.status_block(cfg, ca, admin=(role == "admin")))
+                finally:
+                    ca.close()
             if u.path == "/api/profil":
                 return self.send(200, profil_get(lang))
             if u.path == "/api/profil/esp_entity":
@@ -2122,6 +2193,9 @@ class H(BaseHTTPRequestHandler):
                 return self.send(code, out)
             if u.path == "/api/user_target":
                 code, out = user_target_post(cfg, body, email, lang)
+                return self.send(code, out)
+            if u.path == "/api/utlm":
+                code, out = utlm_post(cfg, body, role, lang)
                 return self.send(code, out)
             if u.path == "/api/room_target":
                 code, out = room_target_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
