@@ -1945,6 +1945,16 @@ class H(BaseHTTPRequestHandler):
                     return self.send(200, {"items": interventions.list_items(c, lim)})
                 finally:
                     c.close()
+            if u.path == "/api/valves":
+                try:
+                    lim = max(1, min(200, int(p.get("limit", ["20"])[0])))
+                except ValueError:
+                    lim = 20
+                c = adb(cfg)
+                try:
+                    return self.send(200, {"items": interventions.list_items(c, lim, kind="ventil")})
+                finally:
+                    c.close()
             if u.path == "/api/reports":
                 try:
                     lim = max(1, min(100, int(p.get("limit", ["8"])[0])))
@@ -2183,6 +2193,26 @@ class H(BaseHTTPRequestHandler):
                 finally:
                     c.close()
                 return self.send(200, {"ok": True, "id": iid})
+            if u.path == "/api/valve":
+                room = body.get("room")
+                if room not in ROOMS:
+                    return self.send(400, {"error": tr("srv.app.neplatna_izba", lang)})
+                try:
+                    turns = float(body.get("turns"))
+                    if isinstance(body.get("turns"), bool) or not (0 < abs(turns) <= 5):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    return self.send(400, {"error": tr("srv.app.ventil_zmena", lang)})
+                try:
+                    ts = parse_ts(body.get("ts"))
+                except ValueError:
+                    return self.send(400, {"error": tr("srv.app.zasah_cas", lang)})
+                c = adb(cfg)
+                try:
+                    iid, warn = interventions.add_valve(c, room, turns, body.get("label"), body.get("note"), ts=ts)
+                finally:
+                    c.close()
+                return self.send(200, {"ok": True, "id": iid, "warning": warn})
             if u.path == "/api/intervention_cancel":
                 c = adb(cfg)
                 try:

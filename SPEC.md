@@ -65,6 +65,12 @@ Tabuľka `interventions(id INTEGER PRIMARY KEY, ts, source, kind, room, text, st
 - Hotové vyhodnotenia za 14 dní a čakajúce zásahy pridaj do vstupu hodinového behu aj denného učenia (sekcia „ZÁSAHY A ICH VÝSLEDKY“).
   Kým zásah `ventil` čaká, agent nesmie meniť krivku: `check_action` odmietne FSV 2031/2032 s poznámkou „čaká sa na vyhodnotenie zásahu“.
 
+### Denník vyregulovania ventilov
+Záznam `kind=ventil` s `detail` (JSON: `label` default „VK 33“, `turns`, `change`, `note`); stĺpce `interventions.detail`, `interventions.result48` (ALTER v `common.py`).
+Vyhodnotenie po 24 h (`result`) a po 48 h (`result48`, spoľahlivejšie; len záznamy s `detail`). Výsledok má blok `valve`: `spread_before/after/delta`
+(priemer hodinového max−min cez izby), `room_vs_others_*` (izba − priemer ostatných), `vonku_delta`, `weather_differs` (> 3 °C), `verdict`
+(`lepsie`/`horsie` pri zmene rozptylu ≥ 0,2 °C, inak `bez_zmeny`). Týždenný súhrn (`ventily`) a vstup modelu obsahujú zmeny ventilov s 48 h výsledkom.
+
 ## 4. Šetrenie volaní modelu („rutina“)
 V `main()` pred `run_once`: `need, reasons = needs_llm(cfg, c, cur, hrs)`. Model sa volá, ak platí aspoň jedno:
 - vynútený beh (`run_now`), nová správa majiteľa od posledného behu s modelom, nový zásah alebo hotové vyhodnotenie od posledného behu;
@@ -142,6 +148,8 @@ Existujúce endpointy ostávajú. Nové / zmenené:
 | GET `/api/interventions?limit=20` | – | `{"items":[{"id","ts","source","kind","room","text","status","due_ts","result":null|{before,after,delta,verdict_text}}]}` najnovšie prvé |
 | POST `/api/intervention` | `{"text","kind"?,"room"?,"ts"?}` | `{"ok":true,"id"}` (source `user_manual`) |
 | POST `/api/intervention_cancel` | `{"id"}` | `{"ok":true}` (len status `caka`) |
+| GET `/api/valves?limit=20` | – | `{"items":[...]}` zásahy `kind=ventil` (navyše `detail:{label,turns,change,note}`, `result48`), len admin |
+| POST `/api/valve` | `{"room","turns","label"?,"note"?,"ts"?}` | `{"ok":true,"id","warning":null\|text}` (`turns` záporné = priviera; varovanie, ak predchádzajúca zmena ventilu ešte čaká na vyhodnotenie) |
 | POST `/api/undo` | `{"action_id"}` | `{"ok":true}` / 400 `{"error"}` |
 | GET `/api/reports?limit=8` | – | `{"items":[{"id","ts","week_from","week_to","text","cost"}]}` |
 | POST `/api/message` | `{"text"}` | doterajšie + `"intervention": null|{"id","kind","room","due_ts"}` |

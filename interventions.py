@@ -13,6 +13,9 @@ EVAL_AFTER_S = 24 * 3600
 MIN_HOURS = 20                      # minimum hodín s dátami v každom okne
 GIVE_UP_S = 72 * 3600               # ak ani 72 h po termíne nie sú dáta, zásah sa uzavrie ako "nedostatok dát"
 CURVE_ENTITIES = tuple(SETTINGS[k] for k in ("fsv2031", "fsv2032") if k in SETTINGS)
+EVAL2_AFTER_S = 48 * 3600           # druhé (spoľahlivejšie) vyhodnotenie ventilu
+VALVE_THRESHOLD = 0.2               # °C: zmena rozptylu izieb aspoň takáto = lepšie / horšie
+WEATHER_DIFF_C = 3.0                # °C: rozdiel vonkajšej teploty medzi oknami, od ktorého je porovnanie menej spoľahlivé
 AGENT_MATCH_S = 180                 # zmena nastavenia do ±3 min od akcie agenta = zmena agenta
 
 
@@ -23,28 +26,35 @@ def sk(x, nd=1, sign=False):
     return (("%+.*f" % (nd, x)) if sign else ("%.*f" % (nd, x))).replace(".", ",")
 
 
-def row_dict(r, full=True):
-    d = dict(zip(("id", "ts", "source", "kind", "room", "text", "status", "due_ts", "result", "notified"), r))
+def _js(x):
     try:
-        d["result"] = json.loads(d["result"]) if d["result"] else None
+        return json.loads(x) if x else None
     except ValueError:
-        d["result"] = None
+        return None
+
+
+def row_dict(r, full=True):
+    d = dict(zip(("id", "ts", "source", "kind", "room", "text", "status", "due_ts", "result", "notified", "detail", "result48"), r))
+    d["result"] = _js(d["result"])
+    d["result48"] = _js(d["result48"])
+    d["detail"] = _js(d["detail"])
     d.pop("notified", None)
     return d
 
 
-COLS = "id,ts,source,kind,room,text,status,due_ts,result,notified"
+COLS = "id,ts,source,kind,room,text,status,due_ts,result,notified,detail,result48"
 
 
-def add(c, source, kind, room, text, ts=None):
-    """Vloží zásah (status 'caka', vyhodnotenie o 24 h). ts nikdy nie v budúcnosti. Vracia id."""
+def add(c, source, kind, room, text, ts=None, detail=None):
+    """Vloží zásah (status 'caka', vyhodnotenie o 24 h). ts nikdy nie v budúcnosti. Vracia id. detail = voliteľný slovník (JSON)."""
     now = int(time.time())
     ts = now if ts is None else min(int(ts), now)
     kind = kind if kind in KINDS else "ine"
     room = room if room in ROOMS else None
     source = source if source in SOURCES else "user_manual"
-    cur = c.execute("INSERT INTO interventions(ts,source,kind,room,text,status,due_ts,notified) VALUES(?,?,?,?,?,?,?,0)",
-                    (ts, source, kind, room, str(text or "").strip()[:500], "caka", ts + EVAL_AFTER_S))
+    cur = c.execute("INSERT INTO interventions(ts,source,kind,room,text,status,due_ts,notified,detail) VALUES(?,?,?,?,?,?,?,0,?)",
+                    (ts, source, kind, room, str(text or "").strip()[:500], "caka", ts + EVAL_AFTER_S,
+                     json.dumps(detail, ensure_ascii=False) if detail else None))
     c.commit()
     return cur.lastrowid
 
@@ -61,13 +71,17 @@ def get(c, iid):
     return row_dict(r) if r else None
 
 
-def list_items(c, limit=20, a=None, b=None):
-    """Najnovšie prvé; a/b = filter podľa ts zásahu [a, b)."""
+def list_items(c, limit=20, a=None, b=None, kind=None):
+    """Najnovšie prvé; a/b = filter podľa ts zásahu [a, b); kind = len daný druh."""
+    w, args = [], []
     if a is not None:
-        rows = c.execute("SELECT %s FROM interventions WHERE ts>=? AND ts<? ORDER BY ts DESC, id DESC LIMIT ?" % COLS,
-                         (a, b, limit)).fetchall()
-    else:
-        rows = c.execute("SELECT %s FROM interventions ORDER BY ts DESC, id DESC LIMIT ?" % COLS, (limit,)).fetchall()
+        w.append("ts>=? AND ts<?")
+        args += [a, b]
+    if kind:
+        w.append("kind=?")
+        args.append(kind)
+    rows = c.execute("SELECT %s FROM interventions %s ORDER BY ts DESC, id DESC LIMIT ?" % (COLS, ("WHERE " + " AND ".join(w)) if w else ""),
+                     (*args, limit)).fetchall()
     return [row_dict(r) for r in rows]
 
 
@@ -100,7 +114,13 @@ def okna_min(cfg, c, a, b):
             c.close()
 
 
-def window_stats(cfg, a, b, c=None):
+def hourly_spread(ok):
+    """Priemer hodinového rozptylu izieb (max − min cez izby s dátami; hodiny s < 2 izbami sa vynechajú); None bez dát."""
+    spr = [max(v) - min(v) for v in ([h[r] for r in ROOMS if h.get(r) is not None] for h in ok) if len(v) >= 2]
+    return round(sum(spr) / len(spr), 2) if spr else None
+
+
+def window_stats(cfg, a, b, c=None, min_hours=MIN_HOURS):
     """Súhrn okna [a, b) z hodinových štatistík. Vracia (štruktúra podľa kontraktu, počet hodín s dátami)."""
     hours = hour_stats(cfg, a, b)
     ok = [h for h in hours if h.get("n")]
@@ -113,9 +133,9 @@ def window_stats(cfg, a, b, c=None):
     diff = {r: (None if rooms[r] is None or rooms[REF_ROOM] is None else round(rooms[r] - rooms[REF_ROOM], 2)) for r in ROOMS[1:]}
     vonku = avg("vonku")
     kwh = round(sum(h.get("kwh") or 0 for h in ok), 2)
-    kns = round(kwh / (23 - vonku), 3) if len(ok) >= MIN_HOURS and vonku is not None and 23 - vonku > 3 and kwh > 0 else None
+    kns = round(kwh / (23 - vonku), 3) if len(ok) >= min_hours and vonku is not None and 23 - vonku > 3 and kwh > 0 else None
     out = {"a": a, "b": b, "vonku": vonku, "rooms": rooms, "diff": diff, "kwh": kwh, "kwh_na_stupen": kns,
-           "dt_beh": avg("dt_beh"), "starty": sum(h.get("starty") or 0 for h in ok), "beh": avg("beh"),
+           "dt_beh": avg("dt_beh"), "spread": hourly_spread(ok), "starty": sum(h.get("starty") or 0 for h in ok), "beh": avg("beh"),
            "okna_min": okna_min(cfg, c, a, b)}
     if out["beh"] is not None:
         out["beh"] = round(out["beh"])
@@ -134,6 +154,7 @@ def make_delta(before, after):
             "kwh_na_stupen": _d(k0, k1, 3),
             "kwh_na_stupen_pct": round((k1 - k0) / k0 * 100, 1) if k0 and k1 is not None else None,
             "dt_beh": _d(before["dt_beh"], after["dt_beh"], 1),
+            "spread": _d(before.get("spread"), after.get("spread")),
             "okna_min": _d(before.get("okna_min"), after.get("okna_min"), 0)}
 
 
@@ -204,19 +225,52 @@ def verdict(iv, before, after, delta, lang="sk"):
     return text
 
 
-def evaluate(cfg, iv, c=None, lang=None):
-    """Vyhodnotenie jedného zásahu. Vracia (result_dict, dosť_dát)."""
+def valve_eval(iv, before, after, delta):
+    """Vyhodnotenie ventilu: rozptyl izieb pred/po, zmena teploty dotknutej izby voči ostatným, počasie, verdikt (lepsie/horsie/bez_zmeny)."""
+    def vs_others(w):
+        rooms, r = w["rooms"], iv.get("room")
+        oth = [v for k, v in rooms.items() if k != r and v is not None]
+        return None if r not in ROOMS or rooms.get(r) is None or not oth else round(rooms[r] - sum(oth) / len(oth), 2)
+    rb, ra = vs_others(before), vs_others(after)
+    sd = delta.get("spread")
+    vd = delta.get("vonku")
+    return {"spread_before": before.get("spread"), "spread_after": after.get("spread"), "spread_delta": sd,
+            "room_vs_others_before": rb, "room_vs_others_after": ra, "room_vs_others_delta": _d(rb, ra),
+            "vonku_delta": vd, "weather_differs": vd is not None and abs(vd) > WEATHER_DIFF_C,
+            "verdict": None if sd is None else ("lepsie" if sd <= -VALVE_THRESHOLD else "horsie" if sd >= VALVE_THRESHOLD else "bez_zmeny")}
+
+
+def valve_text(v, lang="sk", hours=24):
+    n = lambda x, nd=2, sign=False: i18n.dec(sk(x, nd, sign), lang)
+    vt = v.get("verdict")
+    if vt is None:
+        return ""
+    t = tr("srv.interventions.valve_text", lang, h=hours, verdict=tr("srv.interventions.valve_" + vt, lang),
+           a=n(v["spread_before"]), b=n(v["spread_after"]), d=n(v["spread_delta"], 2, True), r=n(v.get("room_vs_others_delta"), 2, True))
+    if v.get("weather_differs"):
+        t += " " + tr("srv.interventions.valve_pocasie", lang, v=n(abs(v["vonku_delta"]), 1))
+    return t
+
+
+def evaluate(cfg, iv, c=None, lang=None, hours=24):
+    """Vyhodnotenie jedného zásahu v oknách ±`hours` h. Vracia (result_dict, dosť_dát)."""
     lang = lang or i18n.home_lang(cfg)
-    ts = iv["ts"]
-    before, nb = window_stats(cfg, ts - EVAL_AFTER_S, ts, c)
-    after, na = window_stats(cfg, ts, ts + EVAL_AFTER_S, c)
+    ts, win = iv["ts"], hours * 3600
+    mh = MIN_HOURS * hours // 24
+    before, nb = window_stats(cfg, ts - win, ts, c, mh)
+    after, na = window_stats(cfg, ts, ts + win, c, mh)
     delta = make_delta(before, after)
-    enough = nb >= MIN_HOURS and na >= MIN_HOURS
+    enough = nb >= mh and na >= mh
     if enough:
         vt = verdict(iv, before, after, delta, lang)
     else:
-        vt = tr("srv.interventions.nedostatok", lang, nb=nb, na=na, min=MIN_HOURS)
-    return {"before": before, "after": after, "delta": delta, "verdict_text": vt}, enough
+        vt = tr("srv.interventions.nedostatok", lang, nb=nb, na=na, min=mh)
+    res = {"before": before, "after": after, "delta": delta, "verdict_text": vt, "hours": hours}
+    if iv.get("kind") == "ventil":
+        res["valve"] = valve_eval(iv, before, after, delta)
+        if enough:
+            res["verdict_text"] = (vt + " " + valve_text(res["valve"], lang, hours)).strip()
+    return res, enough
 
 
 def evaluate_due(cfg, c, now=None):
@@ -245,7 +299,77 @@ def evaluate_due(cfg, c, now=None):
                              tr("srv.interventions.notify_text", i18n.home_lang(cfg), t=iv["text"][:120], v=res["verdict_text"]))
             except Exception:
                 pass
+    evaluate_due48(cfg, c, now)
     return done
+
+
+def evaluate_due48(cfg, c, now=None):
+    """Druhé vyhodnotenie ventilov (±48 h) pre už vyhodnotené (24 h) záznamy denníka (so štruktúrovaným detailom). Vracia zoznam id."""
+    now = int(now or time.time())
+    done = []
+    rows = c.execute("SELECT %s FROM interventions WHERE kind='ventil' AND detail IS NOT NULL AND status='hotove' AND result48 IS NULL AND ts+?<=? ORDER BY ts"
+                     % COLS, (EVAL2_AFTER_S, now)).fetchall()
+    for r in rows:
+        iv = row_dict(r)
+        try:
+            res, enough = evaluate(cfg, iv, c, hours=48)
+        except Exception as e:
+            print("vyhodnotenie (48 h) zásahu %s zlyhalo: %s" % (iv["id"], e), flush=True)
+            continue
+        if not enough and now - iv["ts"] - EVAL2_AFTER_S < GIVE_UP_S:
+            continue
+        c.execute("UPDATE interventions SET result48=? WHERE id=? AND result48 IS NULL", (json.dumps(res, ensure_ascii=False), iv["id"]))
+        c.commit()
+        done.append(iv["id"])
+    return done
+
+
+# ---------------------------------------------------------------- denník ventilov
+
+def fmt_turns(t):
+    """−0,25 → '−¼ ot.'; +0,5 → '+½ ot.'; ostatné desatinne."""
+    fr = {0.25: "¼", 0.5: "½", 0.75: "¾"}
+    a = abs(t)
+    whole, rest = int(a), round(a - int(a), 2)
+    if rest in fr or not rest:
+        body = (str(whole) if whole else "") + fr.get(rest, "")
+    else:
+        body = ("%g" % round(a, 2)).replace(".", ",")
+    return ("−" if t < 0 else "+") + (body or "0") + " ot."
+
+
+def add_valve(c, room, turns, label=None, note=None, ts=None):
+    """Záznam do denníka vyregulovania: izba (kľúč), zmena v otáčkach (záporná = privierané), štítok ventilu, poznámka.
+    Vracia (id, varovanie|None); varovanie = predchádzajúca zmena ventilu ešte nie je vyhodnotená."""
+    turns = float(turns)
+    label = str(label or "").strip()[:40] or "VK 33"
+    note = str(note or "").strip()[:200]
+    text = "%s %s: %s %s" % (label, ROOM_NAMES.get(room, room).lower(), "priškrtený" if turns < 0 else "pootvorený", fmt_turns(turns))
+    if note:
+        text += " – " + note
+    now = int(time.time())
+    when = now if ts is None else min(int(ts), now)
+    warn = pending_valve_warning(c, when)
+    iid = add(c, "user_manual", "ventil", room, text, ts=ts, detail={"label": label, "turns": turns, "change": fmt_turns(turns), "note": note})
+    return iid, warn
+
+
+def pending_valve_warning(c, ts, lang="sk"):
+    """Text varovania, ak je do 24 h pred `ts` (alebo neskôr) nevyhodnotená zmena ventilu; inak None."""
+    n = c.execute("SELECT count(*) FROM interventions WHERE kind='ventil' AND status='caka' AND ts>?", (ts - EVAL_AFTER_S,)).fetchone()[0]
+    return tr("srv.interventions.valve_predchadzajuca", lang) if n else None
+
+
+def valve_line(iv, lang="sk"):
+    """Jednoriadkový popis zmeny ventilu s najlepším dostupným výsledkom (48 h, inak 24 h) pre súhrn a vstup modelu."""
+    d = iv.get("detail") or {}
+    res = iv.get("result48") or iv.get("result")
+    h = (res or {}).get("hours", 24) if res else None
+    base = "%s %s: %s" % (d.get("label") or "VK 33", ROOM_NAMES.get(iv.get("room"), iv.get("room") or "?"), d.get("change") or "")
+    v = (res or {}).get("valve")
+    if not v or v.get("verdict") is None:
+        return base + " – " + tr("srv.interventions.valve_caka", lang)
+    return base + " – " + valve_text(v, lang, h)
 
 
 # ---------------------------------------------------------------- ručné zmeny nastavení
@@ -327,6 +451,9 @@ def llm_text(c, now=None, lang="sk"):
     for r in c.execute("SELECT %s FROM interventions WHERE status='hotove' AND due_ts>=? ORDER BY ts" % COLS, (now - 14 * 86400,)).fetchall():
         iv = row_dict(r)
         vt = (iv["result"] or {}).get("verdict_text", "")
+        v48 = ((iv.get("result48") or {}).get("valve")) or {}
+        if v48.get("verdict"):
+            vt += " | " + valve_text(v48, lang, 48)
         out.append(tr("srv.prompt.iv_done", lang, ts=time.strftime("%d.%m. %H:%M", time.localtime(iv["ts"])), kind=kind_label(iv["kind"], lang),
                       room=(" (" + ROOM_NAMES.get(iv["room"], iv["room"]) + ")") if iv["room"] else "", text=iv["text"], verdict=vt))
     return "\n".join(out) or tr("srv.prompt.ziadne", lang)

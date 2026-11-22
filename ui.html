@@ -801,6 +801,23 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
     <section class="panel pad" id="roomlist"><div class="head"><h2 data-i18n="nav.izby">Izby</h2><span class="sub" data-i18n="izby.sub">Aktuálna teplota · klikni na izbu pre detail</span><button type="button" class="btn sm" id="vkbtn" aria-expanded="false" aria-controls="vkbox" data-i18n="izby.vk_btn">Ako kúri podľa vonku</button></div>
     <div class="bigrooms" id="bigrooms"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
     <div id="porbox" hidden></div></section>
+    <section class="panel pad adm" id="vlvpanel">
+      <div class="head"><h2 data-i18n="izby.vlv_titul">Vyregulovanie ventilov</h2><span class="sub" data-i18n="izby.vlv_sub">Jedna zmena naraz; účinok na rozptyl teplôt izieb sa vyhodnotí po 24 a 48 hodinách</span></div>
+      <form id="vlvform" class="form" autocomplete="off">
+        <div class="frow2">
+          <div class="form"><label for="vlvroom" data-i18n="spolocne.izba">Izba</label><select id="vlvroom" required></select></div>
+          <div class="form"><label for="vlvturns" data-i18n="izby.vlv_zmena">Zmena (otáčky)</label>
+            <select id="vlvturns"><option value="-0.5">−½</option><option value="-0.25" selected>−¼</option><option value="0.25">+¼</option><option value="0.5">+½</option><option value="custom" data-i18n="izby.vlv_vlastna">Vlastná…</option></select></div>
+        </div>
+        <input type="text" class="plain" id="vlvcustom" inputmode="decimal" hidden placeholder="−0,75" aria-label="Zmena v otáčkach (− priviera)" data-i18n-attr="aria-label:izby.vlv_ot_aria">
+        <div class="frow2">
+          <div class="form"><label for="vlvlabel" data-i18n="izby.vlv_stitok">Ventil</label><input type="text" class="plain" id="vlvlabel" maxlength="40" value="VK 33"></div>
+          <div class="form"><label for="vlvnote" data-i18n="izby.vlv_poznamka">Poznámka</label><input type="text" class="plain" id="vlvnote" maxlength="200"></div>
+        </div>
+        <div class="btnrow"><button class="btn primary" type="submit" data-i18n="izby.vlv_pridat">Zapísať zmenu</button><span id="vlvmsg" class="sub" role="status"></span></div>
+      </form>
+      <div id="vlvlist" aria-live="polite" style="margin-top:14px"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
+    </section>
     <section class="panel pad" id="vkbox" hidden>
       <div class="head"><h2 data-i18n="izby.vk_titul">Ako kúri podľa vonkajšej teploty</h2><span class="sub" id="vkrange"></span><button type="button" class="btn sm" id="vkclose" data-i18n="spolocne.zavriet">Zavrieť</button></div>
       <div class="vkcard" id="vkcurve" hidden></div>
@@ -1376,7 +1393,7 @@ function activate(id) {
   const first = !loadedTabs.has(id); loadedTabs.add(id);
   if (id === "prehlad") { drawScale(); const th = $("#thread"); th.scrollTop = th.scrollHeight; if (first) { loadMessages().catch(() => {}); if (!isUser()) loadInterventions().catch(() => {}); } }
   else if (id === "spotreba") loadSpotreba().catch(() => {});
-  else if (id === "izby") { renderBigRooms(statusData || {}); vkSync(true); loadPor().catch(() => {}); }
+  else if (id === "izby") { renderBigRooms(statusData || {}); vkSync(true); loadPor().catch(() => {}); if (!isUser()) loadValves().catch(() => {}); }
   else if (id === "tuv") renderTuv(statusData || {});
   else if (id === "den") { if (dayData) drawCharts(); if (!dayData) loadDay().catch(() => {}); else if (dayStale) loadDay(true).catch(() => {}); if (first) loadHistory().catch(() => {}); }
   else if (id === "statistiky") loadStatsUI();
@@ -1895,6 +1912,7 @@ function applyProfil(pi) {
   set("#eyebrow", t(RKEYS[0] === "detska" ? "prehlad.eyebrow_detska" : "prehlad.eyebrow", {room: refName()}));
   set("#tgrefnote", refName()); set("#abref", refGen2()); set("#setref", refGen2());
   const dl = $("#dial"); if (dl) dl.setAttribute("aria-label", t("prehlad.ciel_aria_ref", {ref: refGen2()}));
+  const vr = $("#vlvroom"); if (vr) { const cur = vr.value; vr.innerHTML = RKEYS.map(k => `<option value="${esc(k)}">${esc(RN[k])}</option>`).join(""); if (RKEYS.includes(cur)) vr.value = cur; }
   const iv = $("#ivroom"); if (iv) { const cur = iv.value; iv.innerHTML = `<option value="">${t("agent.ziadna_dom")}</option>` + RKEYS.map(k => `<option value="${esc(k)}">${esc(RN[k])}</option>`).join(""); iv.value = RKEYS.includes(cur) ? cur : ""; }
   bigHtml = ""; tuvHtml = "";
   applyFunkcie(pi.funkcie);
@@ -3239,6 +3257,35 @@ $("#ivform").onsubmit = guard(async e => { e.preventDefault(); const text = $("#
   if (r.error) return say("#ivformmsg", r.error, false);
   $("#ivtext").value = ""; $("#ivts").value = nowLocal(); say("#ivformmsg", t("agent.zasah_pridany"), true);
   await loadInterventions(); touchDay(true); }, "#ivformmsg");
+
+/* denník vyregulovania ventilov (Izby): zápis zmeny a výsledky (rozptyl izieb pred → po, 24 h / 48 h) */
+const vlvSpread = r => r && r.valve && r.valve.spread_after != null ? `${f(r.valve.spread_before, 2)} → ${f(r.valve.spread_after, 2)}` : "–";
+function vlvRow(it) {
+  const r24 = it.result, r48 = it.result48, v = (r48 || r24)?.valve, d = it.detail || {};
+  const ver = v && v.verdict ? `<span class="pill ${v.verdict === "lepsie" ? "p-ok" : v.verdict === "horsie" ? "p-warn" : "p-info"}">${t("izby.vlv_" + v.verdict)}</span>` : (it.status === "caka" ? `<span class="pill p-info">${t("agent.iv_caka")}</span>` : "–");
+  const wx = v && v.weather_differs ? ` <span class="pill p-warn">${t("izby.vlv_pocasie")}</span>` : "";
+  const cancel = it.status === "caka" ? ` <button type="button" class="btn sm" data-vlvcancel="${esc(it.id)}" aria-label="${esc(t("agent.iv_zrusit_aria"))}">${t("spolocne.zrusit")}</button>` : "";
+  return `<tr><td>${esc(dayLabel(it.ts))}</td><td>${esc(RN[it.room] ?? it.room ?? "")}</td><td>${esc(d.change || "")} <small class="sub">${esc(d.label || "")}${d.note ? " · " + esc(d.note) : ""}</small></td>` +
+    `<td>${vlvSpread(r24)}</td><td>${vlvSpread(r48)}</td><td>${v ? sg(v.room_vs_others_delta, 2) : "–"}</td><td>${ver}${wx}${cancel}</td></tr>`;
+}
+async function loadValves() {
+  const box = $("#vlvlist"); if (!box) return;
+  const r = await api("api/valves?limit=30"); if (!authed) return;
+  if (r.error || !Array.isArray(r.items)) { box.innerHTML = `<div class="empty">${t("izby.vlv_zlyhalo")}</div>`; return; }
+  box.innerHTML = r.items.length ? `<div class="tscroll"><table class="cmp"><thead><tr>${["datum", "izba", "zmena", "r24", "r48", "izba_d", "verdikt"].map(k => `<th>${t("izby.vlv_c_" + k)}</th>`).join("")}</tr></thead><tbody>${r.items.filter(x => x.status !== "zrusene").map(vlvRow).join("")}</tbody></table></div>` : `<div class="empty">${t("izby.vlv_ziadne")}</div>`;
+}
+$("#vlvturns").onchange = () => { const c = $("#vlvturns").value === "custom"; $("#vlvcustom").hidden = !c; if (c) $("#vlvcustom").focus(); };
+$("#vlvlist").addEventListener("click", guard(async e => { const b = e.target.closest("[data-vlvcancel]"); if (!b) return;
+  b.disabled = true; const r = await api("api/intervention_cancel", {id: +b.dataset.vlvcancel});
+  if (r.error) { b.disabled = false; return say("#vlvmsg", r.error, false); }
+  await loadValves(); loadInterventions().catch(() => {}); }, "#vlvmsg"));
+$("#vlvform").onsubmit = guard(async e => { e.preventDefault();
+  const sel = $("#vlvturns").value, turns = sel === "custom" ? parseFloat($("#vlvcustom").value.replace(/[−–]/g, "-").replace(",", ".")) : +sel;
+  if (!$("#vlvroom").value || !Number.isFinite(turns) || !turns) return say("#vlvmsg", t("izby.vlv_neplatna"), false);
+  say("#vlvmsg", t("spolocne.ukladam")); const r = await api("api/valve", {room: $("#vlvroom").value, turns, label: $("#vlvlabel").value.trim(), note: $("#vlvnote").value.trim()});
+  if (r.error) return say("#vlvmsg", r.error, false);
+  $("#vlvnote").value = ""; say("#vlvmsg", r.warning ? t("izby.vlv_zapisane") + " " + r.warning : t("izby.vlv_zapisane"), !r.warning);
+  await loadValves(); loadInterventions().catch(() => {}); touchDay(true); }, "#vlvmsg");
 
 /* vrátenie zmeny agenta (potvrdenie priamo v stránke) */
 document.addEventListener("click", async e => {
