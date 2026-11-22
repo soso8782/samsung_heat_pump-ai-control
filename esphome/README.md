@@ -8,7 +8,7 @@ The Samsung Heat Pump AI Control app does not talk to the heat pump directly. It
 
 **Recommended starting point:** [`m5stack-tc.yaml`](m5stack-tc.yaml) is the **verified, actually running configuration** of the
 reference installation (Split AE120JXEDGH, gen. J) – including curve offset control based on room temperature, a time schedule
-and hybrid mode. Replace the Home Assistant entities (room sensors) and the IP address in it; passwords are in `secrets.yaml`.
+and hybrid mode. Do **not** edit it: all site-specific values (Home Assistant entities of the room sensors, IP address) are `substitutions` at the top, overridden from a local wrapper (see below); passwords are in `secrets.yaml`.
 
 The file [`samsung-ehs.yaml`](samsung-ehs.yaml) is a simplified **draft** (unverified) – a sample configuration whose **entity names match
 the app's default profile** (`profil.default()["esp"]`). If you use it without renaming the entities, you only need to confirm the
@@ -58,6 +58,16 @@ The NASA bus is RS485 (9600 baud, even parity). On the indoor unit's control boa
    If you enable `web_server.auth`, the app needs to know the credentials – or leave `auth` out of the YAML and keep the module
    in the home network only.
 4. Open `http://<ip>/` – the table should show the entities with Slovak names.
+
+## Local wrapper (updating without manual diffs)
+
+Keep `m5stack-tc.yaml` as an unmodified base and put your own values in a small wrapper next to it:
+
+1. Copy `m5stack-tc.local.example.yaml` to `m5stack-tc.local.yaml` (next to `m5stack-tc.yaml` and `secrets.yaml`) and set your `substitutions` (`esp_ip`, `ha_izba_jedalen`, `ha_izba_obyvacka`, ... - the names are listed at the top of `m5stack-tc.yaml`). Only list the ones that differ from the defaults.
+2. Compile and flash the **wrapper**: `esphome run m5stack-tc.local.yaml`. Substitutions in the main (wrapper) file take precedence over those in the included package.
+3. To update the firmware just replace `m5stack-tc.yaml` with the new version from the repository and flash again; your local file stays untouched. Check the release notes / the `substitutions` block for newly added names.
+
+`!secret` values are resolved from the `secrets.yaml` in the wrapper's folder.
 
 ## Filling in the message numbers (TODO lines)
 

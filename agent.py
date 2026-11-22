@@ -8,7 +8,7 @@ detskej izby) robí firmvér ESP - agent do nej nezasahuje.
 
 Režimy (tabuľka state, kľúč mode):  off = nič nerobí, advise = len radí, control = riadi.
 """
-import json, re, socket, threading, time, traceback, urllib.error, urllib.parse, urllib.request
+import datetime, json, re, socket, sqlite3, threading, time, traceback, urllib.error, urllib.parse, urllib.request
 import profil
 from common import (P, REF_NAME, REF_ROOM, ROOM_NAMES, ROOMS, S, SETTINGS, TARGET_ROOMS, adb, balance, cfg_int, day_bounds, day_summary,
                     dhw_intervals, get_state, get_targets, hour_stats, is_dry, load_cfg, local_midnight, set_state, tcq)
@@ -879,6 +879,43 @@ def riadiaca_mapa(options, izby):
     return out
 
 
+RIADIACA_MATCH_S = 180   # zmena selectu v ESP ±3 min od zápisu z webu = tá istá zmena
+
+
+def riadiaca_prepnutia(cfg, c, a, b):
+    """Prepnutia selectu „Riadiaca izba“ v [a, b): {zaciatok: možnosť platná na začiatku alebo None,
+    zmeny: [{ts, stary, novy, kluc, cidlo, kto, zdroj}]}. Základ sú zmeny stavu selectu zo zberača (tabuľka events: zachytí aj zmeny
+    priamo v ESP/HA); zápisy z webu (tabuľka riadiaca_log) k nim pridávajú `kto` a sú s nimi zlúčené (rovnaká nová možnosť ±3 min,
+    zdroj „web“); web zápis bez zmeny v zberači (zberač nebežal) sa pridá sám. Pri chybe DB prázdny výsledok."""
+    try:
+        ev = tcq(cfg, "SELECT ts, old, new FROM events WHERE entity=? AND old IS NOT NULL AND new IS NOT NULL AND ts>=? AND ts<? ORDER BY ts",
+                 (RIADIACA_ENT, a, b))
+        prev = tcq(cfg, "SELECT new FROM events WHERE entity=? AND new IS NOT NULL AND ts<? ORDER BY ts DESC LIMIT 1", (RIADIACA_ENT, a))
+    except Exception:
+        ev, prev = [], []
+    try:
+        web = c.execute("SELECT ts, stary, novy, kluc, kto FROM riadiaca_log WHERE ts>=? AND ts<? ORDER BY ts", (a - RIADIACA_MATCH_S, b)).fetchall()
+    except sqlite3.Error:
+        web = []
+    web = [list(w) + [False] for w in web]
+    out = []
+    for t, o, n in ev:
+        w = next((x for x in web if not x[5] and x[2] == n and abs(x[0] - t) <= RIADIACA_MATCH_S), None)
+        if w:
+            w[5] = True
+        out.append({"ts": t, "stary": o, "novy": n, "kto": w[4] if w else None, "zdroj": "web" if w else "esp"})
+    for t, o, n, k, who, used in web:
+        if not used and a <= t < b:
+            out.append({"ts": t, "stary": o, "novy": n, "kto": who, "zdroj": "web"})
+    out.sort(key=lambda x: x["ts"])
+    izby = profil.load()["izby"]
+    for x in out:
+        m = riadiaca_mapa([x["novy"]], izby)
+        x["kluc"], x["cidlo"] = (m[0]["kluc"], m[0]["cidlo"]) if m else (None, "")
+    zac = prev[0][0] if prev else (out[0]["stary"] if out else None)
+    return {"zaciatok": zac, "zmeny": out}
+
+
 def esp_select_get(cfg, name, timeout=3):
     """(stav, možnosti) selectu z REST API ESP; pri chybe vyhodí výnimku."""
     url = "%s/select/%s?detail=all" % (cfg["ESP_URL"], urllib.parse.quote(name, safe=""))
@@ -1006,6 +1043,13 @@ def build_input(cfg, c, now, reasons=None, pre=None):
         if ns:
             nm = {r["kluc"]: r["nazov"] for r in p["izby"]}
             notel.insert(0, _p("riad_nesulad", ml, esp=nm.get(ns["esp_izba"], ns["esp_izba"]), profil=nm.get(ns["profil_izba"], ns["profil_izba"])))
+    except Exception:
+        pass
+    try:   # porovnanie riadiacich čidiel (len informácia; riadok iba ak ≥ 2 možnosti majú ≥ 48 h dát)
+        import porovnanie
+        pl = porovnanie.agent_line(cfg, ml, now)
+        if pl:
+            notel.insert(0, pl)
     except Exception:
         pass
     head = ([_p("why_now", ml) + "; ".join(reasons), ""] if reasons else [])
@@ -1560,6 +1604,170 @@ def weekly(cfg, c, now=None):
         return False
 
 
+# ---------------------------------------------------------------- týždenný súhrn kúrenia (kind "suhrn")
+SUHRN_PREFIX = "suhrn_"
+
+
+def suhrn_week(d):
+    """ISO kľúč týždňa 'YYYY-Www' pre dátum d (datetime.date)."""
+    y, w, _ = d.isocalendar()
+    return "%04d-W%02d" % (y, w)
+
+
+def suhrn_bounds(tyzden):
+    """(pondelok, nedeľa, a, b) pre kľúč 'YYYY-Www'; a/b = lokálna polnoc pondelka a nasledujúceho pondelka (mktime s isdst=-1: bezpečné cez
+    zmenu času, týždeň má 167 – 169 hodín). ValueError pri neplatnom kľúči."""
+    m = re.match(r"^(\d{4})-W(\d{2})$", str(tyzden or ""))
+    if not m:
+        raise ValueError("tyzden")
+    mon = datetime.date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1)
+    nxt = mon + datetime.timedelta(days=7)
+    mk = lambda d: int(time.mktime((d.year, d.month, d.day, 0, 0, 0, 0, 0, -1)))
+    return mon, nxt - datetime.timedelta(days=1), mk(mon), mk(nxt)
+
+
+def suhrn_due(cfg, c, now=None):
+    """Kľúč týždňa (predchádzajúci pondelok – nedeľa), za ktorý sa má súhrn odoslať, alebo None. Plánovaný čas = SUHRN_DEN (1 = pondelok)
+    o SUHRN_HODINA v aktuálnom týždni; ak agent v ten čas nebežal, súhrn sa dobehne neskôr v tom istom týždni. Za jeden týždeň iba raz."""
+    if str(cfg.get("SUHRN", "1")).strip() == "0":
+        return None
+    den = cfg_int(cfg, "SUHRN_DEN", 1, 1, 7)
+    hod = cfg_int(cfg, "SUHRN_HODINA", 8, 0, 23)
+    today = datetime.date.fromtimestamp(now or time.time())
+    mon = today - datetime.timedelta(days=today.weekday())
+    sched = mon + datetime.timedelta(days=den - 1)
+    if (now or time.time()) < time.mktime((sched.year, sched.month, sched.day, hod, 0, 0, 0, 0, -1)):
+        return None
+    key = suhrn_week(mon - datetime.timedelta(days=7))
+    return None if get_state(c, "last_suhrn") == key else key
+
+
+def suhrn_data(cfg, c, tyzden, now=None):
+    """Údaje za týždeň (dict, serializovateľný do JSON) alebo None, ak za týždeň nie sú dáta. Voliteľné časti (COP, cena) sa pri chybe vynechajú."""
+    mon, sun, a, b = suhrn_bounds(tyzden)
+    hours = hour_stats(cfg, a, b)
+    s = day_summary(cfg, a, b, hours)
+    if not s.get("hodin_s_datami"):
+        return None
+    ml = i18n.home_lang(cfg)
+    izby = [{"kluc": r, "nazov": ROOM_NAMES.get(r, r), "priemer": s.get(r)} for r in ROOMS if s.get(r) is not None]
+    spr = [max(v) - min(v) for v in ([h[r] for r in ROOMS if h.get(r) is not None] for h in hours) if len(v) >= 2]
+    d = {"tyzden": tyzden, "od": mon.isoformat(), "do": sun.isoformat(), "izby": izby,
+         "rozptyl": round(sum(spr) / len(spr), 2) if spr else None,
+         "vonku": s.get("vonku"), "vonku_min": s.get("vonku_min"), "kwh": s.get("kwh") or None, "cena_eur": None, "cop": None,
+         "starty": s.get("starty"), "tuv_n": s.get("tuv_n"), "hodin_s_datami": s["hodin_s_datami"]}
+    try:
+        import stats
+        t = stats.get_range(cfg, mon.isoformat(), sun.isoformat(), "week", ml)["totals"]
+        d["cop"] = t.get("cop")
+        if t.get("kwh_spotreba") is not None:
+            d["kwh"] = t["kwh_spotreba"]
+    except Exception:
+        pass
+    try:
+        import spotreba
+        sp = spotreba.report(cfg, mon.isoformat(), sun.isoformat(), now, ml)["spolu"]
+        d["cena_eur"] = sp.get("cena_cerpadlo_eur")
+        if sp.get("cerpadlo_kwh") is not None:
+            d["kwh"] = sp["cerpadlo_kwh"]
+    except Exception:
+        pass
+    d["zmeny_agenta"] = c.execute("SELECT count(*) FROM actions WHERE applied=1 AND coalesce(undone,0)=0 AND ts>=? AND ts<?", (a, b)).fetchone()[0]
+    d["zasahy"] = c.execute("SELECT count(*) FROM interventions WHERE ts>=? AND ts<?", (a, b)).fetchone()[0]
+    try:
+        d["prepnutia_riadiacej"] = len(riadiaca_prepnutia(cfg, c, a, b)["zmeny"])
+    except Exception:
+        d["prepnutia_riadiacej"] = None
+    try:
+        d["poplachy"] = [x.get("text") for x in json.loads(get_state(c, ALERTS_KEY, "") or "[]") if x.get("text")]
+    except ValueError:
+        d["poplachy"] = []
+    return d
+
+
+def suhrn_text(d, lang="sk"):
+    """Deterministický text súhrnu z údajov (bez modelu)."""
+    n1 = lambda v: i18n.dec(("%.1f" % v).replace(".", ","), lang)
+    n2 = lambda v: i18n.dec(("%.2f" % v).replace(".", ","), lang)
+    out = []
+    if d.get("izby"):
+        out.append(tr("srv.suhrn.izby", lang, v=", ".join("%s %s °C" % (x["nazov"], n1(x["priemer"])) for x in d["izby"])))
+    if d.get("rozptyl") is not None:
+        out.append(tr("srv.suhrn.rozptyl", lang, v=n1(d["rozptyl"])))
+    if d.get("vonku") is not None:
+        out.append(tr("srv.suhrn.vonku", lang, avg=n1(d["vonku"]), min=n1(d["vonku_min"]) if d.get("vonku_min") is not None else "–"))
+    if d.get("kwh") is not None:
+        out.append(tr("srv.suhrn.energia", lang, kwh=n1(d["kwh"]),
+                      cena=tr("srv.suhrn.cena", lang, v=n2(d["cena_eur"])) if d.get("cena_eur") is not None else ""))
+    if d.get("cop") is not None:
+        out.append(tr("srv.suhrn.cop", lang, v=n2(d["cop"])))
+    if d.get("starty") is not None:
+        out.append(tr("srv.suhrn.starty", lang, n=d["starty"]))
+    if d.get("tuv_n") is not None:
+        out.append(tr("srv.suhrn.tuv", lang, n=d["tuv_n"]))
+    out.append(tr("srv.suhrn.agent", lang, z=d.get("zmeny_agenta") or 0, i=d.get("zasahy") or 0))
+    if d.get("prepnutia_riadiacej") is not None:
+        out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
+    out.append(tr("srv.suhrn.poplachy", lang, v="; ".join(d["poplachy"]) if d.get("poplachy") else tr("srv.suhrn.ziadne", lang)))
+    return "\n".join(out)
+
+
+def suhrn_run(cfg, c, now=None):
+    """Ak je súhrn splatný, zostaví ho (údaje + text + voliteľné odporúčanie modelu), uloží do `reports` (kind 'suhrn') a pošle cez
+    notify.event('suhrn'). Vracia uložený text alebo None. Za týždeň sa pokúsi najviac 3-krát (chyba zostavenia), inak sa označí hotový."""
+    now = int(now or time.time())
+    key = suhrn_due(cfg, c, now)
+    if not key:
+        return None
+    tries = (get_state(c, "suhrn_tries", "") or "").split("|")
+    n = int(tries[1]) if len(tries) == 2 and tries[0] == key and tries[1].isdigit() else 0
+    if n >= 3:
+        return None
+    set_state(c, "suhrn_tries", "%s|%d" % (key, n + 1))
+    ml = i18n.home_lang(cfg)
+    d = suhrn_data(cfg, c, key, now)
+    if d is None:     # za týždeň nie sú dáta: nič neposielať a neopakovať
+        set_state(c, "last_suhrn", key)
+        return None
+    text = suhrn_text(d, ml)
+    cost = 0.0
+    if cfg.get("OPENROUTER_API_KEY") and get_state(c, "mode", "advise") != "off":
+        try:
+            txt, _i, _o, cost = call_llm(cfg, tr("srv.suhrn.llm_system", ml), tr("srv.suhrn.llm_user", ml, text=text), 600, as_json=False)
+            txt = " ".join((txt or "").split())
+            if txt:
+                d["odporucanie"] = txt[:700]
+                text += "\n" + tr("srv.suhrn.odporucanie", ml, v=d["odporucanie"])
+        except Exception as e:
+            print(time.strftime("%F %T"), "odporúčanie k týždennému súhrnu zlyhalo: %s" % e, flush=True)
+    c.execute("DELETE FROM reports WHERE kind='suhrn' AND week_from=?", (d["od"],))
+    c.execute("INSERT INTO reports(ts, week_from, week_to, text, cost, kind, data) VALUES(?,?,?,?,?,?,?)",
+              (now, d["od"], d["do"], text[:6000], float(cost or 0), "suhrn", json.dumps(d, ensure_ascii=False)))
+    c.commit()
+    set_state(c, "last_suhrn", key)
+    try:
+        notify.event(cfg, "suhrn", tr("srv.suhrn.titulok", ml, od=d["od"], do=d["do"]), text)
+    except Exception:
+        traceback.print_exc()
+    return text
+
+
+def suhrn_get(c, tyzden=None):
+    """Uložený súhrn za týždeň 'YYYY-Www' (None = najnovší) ako dict alebo None. ValueError pri neplatnom kľúči."""
+    if tyzden:
+        mon = suhrn_bounds(tyzden)[0].isoformat()
+        r = c.execute("SELECT ts, week_from, week_to, text, cost, data FROM reports WHERE kind='suhrn' AND week_from=? ORDER BY ts DESC LIMIT 1", (mon,)).fetchone()
+    else:
+        r = c.execute("SELECT ts, week_from, week_to, text, cost, data FROM reports WHERE kind='suhrn' ORDER BY week_from DESC, ts DESC LIMIT 1").fetchone()
+    if not r:
+        return None
+    try:
+        data = json.loads(r[5]) if r[5] else None
+    except ValueError:
+        data = None
+    return {"tyzden": suhrn_week(datetime.date.fromisoformat(r[1])), "ts": r[0], "od": r[1], "do": r[2], "text": r[3], "cost": r[4], "data": data}
+
+
 def next_run_after(now, interval_min):
     step = max(10, int(interval_min)) * 60
     return (int(now) // step + 1) * step + 120   # 2 min po celej hodine, nech je hodina v dátach uzavretá
@@ -1789,6 +1997,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))
+    safe(lambda: suhrn_run(cfg, c, now))
     safe(lambda: abtest.tick(cfg, c, now))
     if now - wd.get("last_eval", 0) >= 600:
         wd["last_eval"] = now

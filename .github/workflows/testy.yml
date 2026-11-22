@@ -1,0 +1,68 @@
+name: testy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    env:
+      # Aplikácia beží v slovenskom čase; testy nech majú rovnaké pásmo ako server.
+      TZ: Europe/Bratislava
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Kompilácia všetkých sledovaných .py súborov
+        run: git ls-files -z '*.py' | xargs -0 python -m py_compile
+
+      - name: Testy test_*.py v koreňovom priečinku
+        run: |
+          failed=()
+          for t in test_*.py; do
+            echo "::group::$t"
+            if python -X utf8 "$t"; then
+              echo "OK: $t"
+            else
+              echo "::error::FAIL: $t"
+              failed+=("$t")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "Zlyhané testy: ${failed[*]}"
+            exit 1
+          fi
+          echo "Všetky testy prešli."
+
+      # tests_ha/ používa len stdlib (unittest) a model.py bez Home Assistanta,
+      # preto ho spúšťame aj v CI.
+      - name: Testy tests_ha/ (unittest)
+        run: python -X utf8 -m unittest discover -s tests_ha -v
+
+  javascript:
+    name: javascript (syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax inline skriptov a stats_ui.js / sw.js
+        run: node .github/scripts/js_syntax.mjs

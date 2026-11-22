@@ -8,7 +8,7 @@ dátovú zbernicu **NASA** (svorky **F1/F2**) a cez `web_server` (REST + SSE) sp
 
 **Odporúčaný začiatok:** [`m5stack-tc.yaml`](m5stack-tc.yaml) je **overená, reálne bežiaca konfigurácia** referenčnej inštalácie
 (Split AE120JXEDGH, gen. J) – vrátane regulácie posunu krivky podľa izbovej teploty, časového plánu a hybridného režimu.
-Prepíš v nej entity Home Assistant (izbové senzory) a IP adresu; heslá sú v `secrets.yaml`.
+Needituj ju: všetky hodnoty špecifické pre inštaláciu (entity Home Assistant izbových čidiel, IP adresa) sú v `substitutions` na začiatku a prepisujú sa z lokálneho obalu (pozri nižšie); heslá sú v `secrets.yaml`.
 
 Súbor [`samsung-ehs.yaml`](samsung-ehs.yaml) je zjednodušený **návrh** (neoverený) – vzorová konfigurácia, ktorej **názvy entít sú rovnaké ako v predvolenom profile
 aplikácie** (`profil.default()["esp"]`). Ak ju použiješ bez zmeny názvov, v sprievodcovi „Zariadenie a dom“ stačí potvrdiť návrh.
@@ -57,6 +57,16 @@ Zbernica NASA je RS485 (9600 baud, parita even). Na riadiacej doske (MIM) vnúto
    Ak zapneš `web_server.auth`, treba, aby aplikácia vedela prihlasovacie údaje – alebo `auth` v YAML vynechaj a modul
    nechaj len v domácej sieti.
 4. Otvor `http://<ip>/` – v tabuľke by si mal vidieť entity so slovenskými názvami.
+
+## Lokálny obal (aktualizácia bez ručného porovnávania)
+
+`m5stack-tc.yaml` nechaj ako nezmenený základ a vlastné hodnoty daj do malého obalu vedľa neho:
+
+1. Skopíruj `m5stack-tc.local.example.yaml` na `m5stack-tc.local.yaml` (vedľa `m5stack-tc.yaml` a `secrets.yaml`) a nastav `substitutions` (`esp_ip`, `ha_izba_jedalen`, `ha_izba_obyvacka`, ... - zoznam je na začiatku `m5stack-tc.yaml`). Uveď len tie, ktoré sa líšia od predvolených.
+2. Kompiluj a nahrávaj **obal**: `esphome run m5stack-tc.local.yaml`. Substitúcie v hlavnom (obalovom) súbore majú prednosť pred tými v pripojenom balíku.
+3. Pri aktualizácii firmvéru stačí nahradiť `m5stack-tc.yaml` novou verziou z repozitára a znova nahrať; lokálny súbor ostáva nedotknutý. Skontroluj, či pribudli nové názvy v bloku `substitutions`.
+
+Hodnoty `!secret` sa čítajú zo `secrets.yaml` v priečinku obalu.
 
 ## Dopĺňanie čísel správ (TODO riadky)
 
