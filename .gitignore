@@ -22,3 +22,4 @@ lead_*
 __pycache__/
 *.pyc
 *.log
+profil.json

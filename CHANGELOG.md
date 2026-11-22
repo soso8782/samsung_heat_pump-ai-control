@@ -2,6 +2,37 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.12.0] – 2026-11-22
+
+### Pridané
+- **Verzia firmvéru vo webe.** ESP má nový text senzor „Verzia firmvéru“ (`fw_verzia` v `esphome/m5stack-tc.yaml`); web ho
+  číta a pri staršom firmvéri (pod `FW_MIN` v `app.py`) alebo chýbajúcom selecte „Riadiaca izba“ ukáže správcovi výzvu
+  nahrať nový `m5stack-tc.yaml` namiesto tichého skrytia výberu. `/api/status` vracia blok `firmver`.
+- **Nesúlad riadiacej izby.** Ak sa „Riadiaca izba“ prepne priamo v ESP/HA, web ukáže upozornenie s tlačidlom
+  „Zosúladiť profil s ESP“ (`riadiaca.nesulad`) a agent nesúlad uvedie vo vstupe.
+- **Výpadok riadiaceho čidla.** Watchdog agenta pošle jedno upozornenie, keď riadiace čidlo neposiela dáta alebo ESP hlási
+  „Čakám na teplotu“ dlhšie ako `CIDLO_STALE_MIN` (predvolene 60 min, 0 = vypnuté), a jedno pri obnovení.
+- **História prepnutí riadiacej izby v grafe izby:** zvislé značky „Riadiaca: …“, pás so zvoleným čidlom a legenda.
+  Zápisy z webu sa ukladajú do tabuľky `riadiaca_log` a zlučujú so zmenami selectu zo zberača (zachytí aj zmeny mimo webu).
+- **`update.sh`:** bezpečná aktualizácia inštalácie z gitu (fast-forward, kontrola syntaxe, reštart, overenie, pri chybe návrat).
+
+### Zmenené
+- `monitor/web.py` berie izbové senzory na porovnanie z profilu (`izby[].esp` / `ha`) namiesto napísaných `entity_id`.
+- Odpojenie klienta (BrokenPipe/ConnectionReset) sa v logu webu a monitora už nevypisuje ako chyba.
+
+## [2.11.0] – 2026-11-22
+
+### Pridané
+- **Výber riadiacej izby kliknutím (správca).** V karte Izby na Prehľade sa kliknutím na izbu otvorí výber: izbu možno
+  nastaviť ako riadiacu a izba s viacerými čidlami (napr. Detská: ESPresense / Zigbee, Jedáleň: izbové čidlo / hlavica)
+  ponúkne výber čidla. Nový select **„Riadiaca izba“** v `esphome/m5stack-tc.yaml` určuje, podľa ktorého čidla beží
+  izbová regulácia v ESP (posun krivky aj vypínanie kúrenia); „Sledovaná teplota (Detská izba)“ teraz ukazuje teplotu
+  zvoleného čidla (názov entity ostáva kvôli histórii). `POST /api/riadiaca {moznost}` zapíše select, overí ho a pri
+  zmene izby prepne referenčnú izbu v profile (doterajšia dostane minimum 21 °C) a reštartuje služby; zmena čidla v tej
+  istej izbe reštart nepotrebuje. Počas testu A/B je zmena zakázaná. `/api/status` (správca) vracia blok `riadiaca`.
+  Možnosť selectu sa páruje s izbou podľa názvu: „<názov izby>“ alebo „<názov izby> (<čidlo>)“. Testy v `test_v2_web.py`.
+  **Vyžaduje nahratie novej konfigurácie do ESP.**
+
 ## [2.10.1] – 2026-11-21
 
 ### Opravené

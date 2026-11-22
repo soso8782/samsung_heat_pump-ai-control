@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Web agenta kúrenia: stav, vypínač agenta, denný kalendár po hodinách, zásahy, upozornenia, prihlásenie."""
-import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request
+import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request, urllib.error
 import profil
 import i18n
 from i18n import tr, tn
@@ -211,6 +211,8 @@ def status(cfg, role="admin", email=None, lang="sk"):
         out["collector_error"] = str(e)
     out["stats"] = stats_brief(cfg, lang)
     out["profil_info"] = profil_info(cfg)
+    out["riadiaca"] = riadiaca_info(cfg)
+    out["firmver"] = firmver_info(cfg, out["riadiaca"])
     out["prevadzka"] = prevadzka(cfg, now)
     try:
         ca = adb(cfg)
@@ -572,7 +574,14 @@ def series_get(cfg, p, lang="sk"):
         target = _series_rows(cfg, SERIES_TARGET[k], since, bin_s)
     vals = [v for _, v in points]
     stats_ = {"min": min(vals), "max": max(vals), "avg": round(sum(vals) / len(vals), 2), "now": vals[-1]} if vals else None
-    return 200, {"k": k, "days": days, "from": since, "to": now, "bin_s": bin_s, "points": points, "target": target, "stats": stats_}
+    out = {"k": k, "days": days, "from": since, "to": now, "bin_s": bin_s, "points": points, "target": target, "stats": stats_}
+    if k != "bojler":   # prepnutia riadiacej izby (zvislé značky a pásy v grafe izby)
+        c = adb(cfg)
+        try:
+            out["riadiaca"] = riadiaca_prepnutia(cfg, c, since, now + 1)
+        finally:
+            c.close()
+    return 200, out
 
 
 def tuv_boost_post(cfg, body, who, lang="sk"):
@@ -589,6 +598,168 @@ def tuv_boost_post(cfg, body, who, lang="sk"):
         return 200, {"ok": bool(ok), "text": str(text), "tuv": dhw.manual_status(c)}
     finally:
         c.close()
+
+
+# --- Riadiaca izba: select „Riadiaca izba“ v ESP určuje čidlo, podľa ktorého beží izbová regulácia; profil (referenčná izba)
+# sa prispôsobí. Možnosť selectu sa mapuje na izbu podľa názvu: „<názov izby>“ alebo „<názov izby> (<čidlo>)“.
+RIADIACA_ENT = _agent_mod.RIADIACA_ENT
+_riadiaca_cache = {"t": 0.0, "ttl": 0, "v": None}
+
+
+riadiaca_mapa = _agent_mod.riadiaca_mapa
+
+
+def riadiaca_info(cfg, force=False):
+    """Stav selectu „Riadiaca izba“ z ESP ({stav, moznosti}) alebo None (ESP ho nemá / neodpovedá). Výsledok sa drží 30 s (chyba 5 min)."""
+    now = time.time()
+    if not force and now - _riadiaca_cache["t"] < _riadiaca_cache["ttl"]:
+        return _riadiaca_cache["v"]
+    v = None
+    try:
+        stav, opts = _agent_mod.esp_select_get(cfg, RIADIACA_ENT)
+        if opts:
+            p = profil.load()
+            mo = riadiaca_mapa(opts, p["izby"])
+            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p)}
+    except Exception:
+        v = None
+    _riadiaca_cache.update(t=now, ttl=30 if v else 300, v=v)
+    return v
+
+
+FW_ENT = "Verzia firmvéru"
+FW_MIN = "2.12"   # najstarší firmvér ESP, ktorý web plne podporuje (zvýšiť len pri zmene firmvéru, nie pri každej verzii webu)
+_fw_cache = {"t": 0.0, "ttl": 0, "v": None}
+
+
+def _mm(v):
+    """'2.12.0' -> (2, 12); neplatné -> None."""
+    m = re.match(r"\s*v?(\d+)\.(\d+)", str(v or ""))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def firmver_info(cfg, riadiaca, force=False):
+    """Verzia firmvéru ESP (text senzor „Verzia firmvéru“) proti FW_MIN.
+    {verzia, pozadovana, stary, nedostupne, hint}; hint = treba ukázať „Firmvér ESP je starší“ (chýba senzor / starší firmvér /
+    ESP odpovedá, ale nemá select „Riadiaca izba“). Výsledok sa drží 60 s (chyba 5 min)."""
+    now = time.time()
+    if force or now - _fw_cache["t"] >= _fw_cache["ttl"]:
+        v, ok = None, True
+        try:
+            url = "%s/text_sensor/%s" % (cfg["ESP_URL"], urllib.parse.quote(FW_ENT, safe=""))
+            with urllib.request.urlopen(url, timeout=3) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            s = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
+            v = s.strip() if isinstance(s, str) and _mm(s) else None
+        except urllib.error.HTTPError:
+            v = None               # ESP odpovedá, ale senzor nemá
+        except Exception:
+            ok = False             # ESP neodpovedá
+        _fw_cache.update(t=now, ttl=60 if ok else 300, v=(v, ok))
+    v, ok = _fw_cache["v"]
+    need = _mm(FW_MIN)
+    stary = bool(ok and need and (_mm(v) is None or _mm(v) < need))
+    return {"verzia": v, "pozadovana": "%d.%d" % need if need else None, "stary": stary, "nedostupne": not ok,
+            "hint": stary or (ok and not riadiaca)}
+
+
+RIADIACA_MATCH_S = 180   # zmena selectu v ESP ±3 min od zápisu z webu = tá istá zmena
+
+
+def riadiaca_prepnutia(cfg, c, a, b):
+    """Prepnutia selectu „Riadiaca izba“ v [a, b): {zaciatok: možnosť platná na začiatku alebo None,
+    zmeny: [{ts, stary, novy, kluc, cidlo, kto, zdroj}]}. Základ sú zmeny stavu selectu zo zberača (tabuľka events: zachytí aj zmeny
+    priamo v ESP/HA); zápisy z webu (tabuľka riadiaca_log) k nim pridávajú `kto` a sú s nimi zlúčené (rovnaká nová možnosť ±3 min,
+    zdroj „web“); web zápis bez zmeny v zberači (zberač nebežal) sa pridá sám. Pri chybe DB prázdny výsledok."""
+    try:
+        ev = tcq(cfg, "SELECT ts, old, new FROM events WHERE entity=? AND old IS NOT NULL AND new IS NOT NULL AND ts>=? AND ts<? ORDER BY ts",
+                 (RIADIACA_ENT, a, b))
+        prev = tcq(cfg, "SELECT new FROM events WHERE entity=? AND new IS NOT NULL AND ts<? ORDER BY ts DESC LIMIT 1", (RIADIACA_ENT, a))
+    except Exception:
+        ev, prev = [], []
+    try:
+        web = c.execute("SELECT ts, stary, novy, kluc, kto FROM riadiaca_log WHERE ts>=? AND ts<? ORDER BY ts", (a - RIADIACA_MATCH_S, b)).fetchall()
+    except sqlite3.Error:
+        web = []
+    web = [list(w) + [False] for w in web]
+    out = []
+    for t, o, n in ev:
+        w = next((x for x in web if not x[5] and x[2] == n and abs(x[0] - t) <= RIADIACA_MATCH_S), None)
+        if w:
+            w[5] = True
+        out.append({"ts": t, "stary": o, "novy": n, "kto": w[4] if w else None, "zdroj": "web" if w else "esp"})
+    for t, o, n, k, who, used in web:
+        if not used and a <= t < b:
+            out.append({"ts": t, "stary": o, "novy": n, "kto": who, "zdroj": "web"})
+    out.sort(key=lambda x: x["ts"])
+    izby = profil.load()["izby"]
+    for x in out:
+        m = riadiaca_mapa([x["novy"]], izby)
+        x["kluc"], x["cidlo"] = (m[0]["kluc"], m[0]["cidlo"]) if m else (None, "")
+    zac = prev[0][0] if prev else (out[0]["stary"] if out else None)
+    return {"zaciatok": zac, "zmeny": out}
+
+
+def riadiaca_post(cfg, body, who, lang="sk"):
+    """POST /api/riadiaca {moznost} (iba správca): prepne čidlo izbovej regulácie v ESP; ak patrí inej izbe, zmení referenčnú
+    izbu v profile a reštartuje služby. Vracia {ok, moznost, kluc, restart[, note]}."""
+    opt = str(body.get("moznost") or "").strip()
+    info = riadiaca_info(cfg, force=True)
+    if not info:
+        return 502, {"error": tr("srv.app.riadiaca_bez_esp", lang)}
+    m = next((x for x in info["moznosti"] if x["moznost"] == opt), None)
+    if not m:
+        return 400, {"error": tr("srv.app.riadiaca_neplatna", lang)}
+    c = adb(cfg)
+    try:
+        if abtest.active(c):
+            return 409, {"error": tr("srv.app.riadiaca_abtest", lang)}
+        p = profil.load()
+        old_ref = profil.reference_room(p)
+        names = {r["kluc"]: r["nazov"] for r in p["izby"]}
+        if is_dry(cfg):
+            return 200, {"ok": True, "moznost": opt, "kluc": m["kluc"], "restart": False, "note": tr("srv.app.dry_hodnota", lang)}
+        try:
+            _agent_mod.esp_set_select(cfg, RIADIACA_ENT, opt)
+            time.sleep(2)
+            back = riadiaca_info(cfg, force=True)
+        except Exception as e:
+            return 502, {"error": tr("srv.app.riadiaca_zapis", lang, err=e)}
+        if not back or back.get("stav") != opt:
+            return 502, {"error": tr("srv.app.riadiaca_nepotvrdene", lang)}
+        restart = m["kluc"] != old_ref
+        if restart:
+            for r in p["izby"]:
+                if r["kluc"] == m["kluc"]:
+                    r["referencna"], r["min"] = True, None
+                elif r.get("referencna"):
+                    r["referencna"] = False
+                    if r.get("min") is None:
+                        r["min"] = 21.0
+            try:
+                errs = profil.save(p, lang=lang)
+            except OSError as e:
+                errs = [str(e)]
+            if errs:
+                return 500, {"error": tr("srv.app.riadiaca_profil", lang, err="; ".join(errs))}
+        hl = i18n.home_lang(cfg)
+        now_ts = int(time.time())
+        old_opt = (info.get("stav") if isinstance(info.get("stav"), str) else None) or names.get(old_ref, old_ref)
+        c.execute("INSERT INTO runs(ts,mode,status,stav,summary,actions) VALUES(?,?,?,?,?,?)",
+                  (now_ts, get_state(c, "mode", "advise"), "info", None,
+                   tr("srv.app.riadiaca_log", hl, who=who, old=names.get(old_ref, old_ref), new=opt), "[]"))
+        # strojovo čitateľný záznam pre grafy (riadok runs ostáva len ľudské zhrnutie)
+        c.execute("INSERT INTO riadiaca_log(ts,stary,novy,kluc,kto) VALUES(?,?,?,?,?)", (now_ts, old_opt, opt, m["kluc"], who))
+        c.commit()
+    finally:
+        c.close()
+    out = {"ok": True, "moznost": opt, "kluc": m["kluc"], "restart": restart}
+    if restart:
+        rs = restart_services(cfg, lang)
+        if not rs.get("ok"):
+            out["restart"] = False
+            out["note"] = tr("srv.app.riadiaca_restart_rucne", lang, dovod=rs.get("dovod") or "")
+    return 200, out
 
 
 def tuv_target_post(cfg, body, who, lang="sk"):
@@ -659,6 +830,7 @@ def day(cfg, dstr, lang="sk"):
         okna_day = contacts.window_minutes(c, a, b)
     except Exception:
         okna_day = None
+    riad = riadiaca_prepnutia(cfg, c, a, b)
     c.close()
     summ = day_summary(cfg, a, b, hours)
     summ["okna_min"] = None if okna_day is None else round(okna_day)
@@ -667,7 +839,8 @@ def day(cfg, dstr, lang="sk"):
     return {"date": time.strftime("%Y-%m-%d", time.localtime(a)), "a": a, "b": b, "hours": hours, "summary": summ,
             "day_review": les[0] if les else None, "messages": messages(cfg, a=a, b=b), "okna": okna, "temps": day_temps,
             "events": [dict(zip(("ts", "kind", "entity", "old", "new", "text"), (e[0], e[1], i18n.event_entity(e[2], lang), e[3], e[4], i18n.event_text(e[5], lang) if e[5] else e[5]))) for e in ev],
-            "notes": [dict(zip(("ts", "author", "title", "body"), n)) for n in notes], "runs": runs, "interventions": ivs}
+            "notes": [dict(zip(("ts", "author", "title", "body"), n)) for n in notes], "runs": runs, "interventions": ivs,
+            "riadiaca": riad}
 
 
 def history(cfg):
@@ -1947,6 +2120,9 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/room_target":
                 code, out = room_target_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
                 return self.send(code, out)
+            if u.path == "/api/riadiaca":
+                code, out = riadiaca_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
+                return self.send(code, out)
             if u.path == "/api/tuv_boost":
                 code, out = tuv_boost_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
                 return self.send(code, out)
@@ -2259,5 +2435,13 @@ class H(BaseHTTPRequestHandler):
         return self.send(200, {"ok": True})
 
 
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # Odpojenie klienta (zavretý prehliadač) nie je chyba servera - bez tracebacku v logu
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", int(load_cfg()["WEB_PORT"])), H).serve_forever()
+    _Server(("0.0.0.0", int(load_cfg()["WEB_PORT"])), H).serve_forever()

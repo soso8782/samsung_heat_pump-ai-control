@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Testy webu v2 (úloha B): profil API, sprievodca, profil_info, reštart služieb. Nič sa nepripája na ESP ani HA (všetko mockované)."""
-import http.client, json, os, sys, tempfile, threading, time, unittest
+import http.client, json, os, sqlite3, sys, tempfile, threading, time, unittest, urllib.error
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
@@ -165,6 +165,202 @@ class Api(Tmp):
     def test_module_constants_follow_profile(self):
         self.assertIn("detska", app.SERIES_KEYS); self.assertIn("bojler", app.SERIES_KEYS)
         self.assertTrue(all(k in app.S for k in app.ROOM_KEYS))
+
+
+class Riadiaca(Tmp):
+    """Výber riadiacej izby: select „Riadiaca izba“ v ESP + prepnutie referenčnej izby v profile (ESP aj reštart sú mockované)."""
+    OPTS = ["Salón (ESPresense)", "Salón (Zigbee)", "Kuchyňa", "Spálňa", "Pivnica"]
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(profil.save(custom_profile()), [])
+        self.state = {"v": self.OPTS[0]}
+        app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+        self.cfg["DRY_RUN"] = "0"
+        mapa = lambda: app.riadiaca_mapa(self.OPTS, profil.load()["izby"])
+        self.p1 = mock.patch.object(app, "riadiaca_info", side_effect=lambda cfg, force=False: {"stav": self.state["v"], "moznosti": mapa()})
+        self.p2 = mock.patch.object(app._agent_mod, "esp_set_select", side_effect=lambda cfg, n, o: self.state.update(v=o))
+        self.p3 = mock.patch.object(app, "restart_services", return_value={"ok": True})
+        self.p4 = mock.patch.object(app.time, "sleep")
+        for x in (self.p1, self.p2, self.p3, self.p4):
+            x.start()
+
+    def tearDown(self):
+        for x in (self.p1, self.p2, self.p3, self.p4):
+            x.stop()
+        super().tearDown()
+
+    def test_mapa(self):
+        m = app.riadiaca_mapa(self.OPTS, profil.load()["izby"])
+        self.assertEqual([(x["kluc"], x["cidlo"]) for x in m],
+                         [("salon", "ESPresense"), ("salon", "Zigbee"), ("kuchyna", ""), ("spalna", "")])   # „Pivnica“ nemá izbu
+
+    def test_ina_izba_prepne_profil_a_restartuje(self):
+        code, out = app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "admin@x")
+        self.assertEqual(code, 200, out); self.assertTrue(out["restart"]); self.assertEqual(out["kluc"], "spalna")
+        p = profil.load()
+        self.assertEqual(profil.reference_room(p), "spalna")
+        r = {x["kluc"]: x for x in p["izby"]}
+        self.assertIsNone(r["spalna"]["min"]); self.assertFalse(r["salon"]["referencna"]); self.assertEqual(r["salon"]["min"], 21.0)
+        app.restart_services.assert_called_once()
+
+    def test_cidlo_tej_istej_izby_bez_restartu(self):
+        code, out = app.riadiaca_post(self.cfg, {"moznost": "Salón (Zigbee)"}, "admin@x")
+        self.assertEqual(code, 200, out); self.assertFalse(out["restart"])
+        self.assertEqual(profil.reference_room(), "salon"); app.restart_services.assert_not_called()
+
+    def test_neplatna_a_dry(self):
+        self.assertEqual(app.riadiaca_post(self.cfg, {"moznost": "Pivnica"}, "a")[0], 400)
+        code, out = app.riadiaca_post(dict(self.cfg, DRY_RUN="1"), {"moznost": "Spálňa"}, "a")
+        self.assertEqual(code, 200); self.assertIn("note", out)
+        self.assertEqual(profil.reference_room(), "salon"); app._agent_mod.esp_set_select.assert_not_called()
+
+    def test_nepotvrdene(self):
+        app._agent_mod.esp_set_select.side_effect = lambda cfg, n, o: None
+        self.assertEqual(app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "a")[0], 502)
+        self.assertEqual(profil.reference_room(), "salon")
+
+    def test_web_zapis_je_strojovo_citatelny(self):
+        app.riadiaca_post(self.cfg, {"moznost": "Salón (Zigbee)"}, "admin@x")
+        c = adb(self.cfg)
+        row = c.execute("SELECT stary, novy, kluc, kto, ts FROM riadiaca_log").fetchall()
+        self.assertEqual([r[:4] for r in row], [("Salón (ESPresense)", "Salón (Zigbee)", "salon", "admin@x")])
+        self.assertEqual(c.execute("SELECT count(*) FROM runs WHERE summary LIKE 'Riadiaca izba zmenená%'").fetchone()[0], 1)
+        c.close()
+
+
+class RiadiacaHistoria(Tmp):
+    """Prepnutia riadiacej izby v grafe: zmeny selectu zo zberača (events) + zápisy z webu (riadiaca_log), zlúčené a bez duplicít."""
+    ENT = app.RIADIACA_ENT
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(profil.save(custom_profile()), [])
+        tc = sqlite3.connect(self.cfg["TC_DB"])
+        tc.executescript("CREATE TABLE events(ts INTEGER, kind TEXT, entity TEXT, old TEXT, new TEXT, text TEXT);"
+                         "CREATE TABLE samples(ts INTEGER, entity TEXT, value REAL);"
+                         "CREATE TABLE notes(ts INTEGER, author TEXT, title TEXT, body TEXT);")
+        self.tc = tc
+        self.c = adb(self.cfg)
+
+    def tearDown(self):
+        self.tc.close(); self.c.close()
+        super().tearDown()
+
+    def ev(self, ts, old, new):
+        self.tc.execute("INSERT INTO events VALUES(?,?,?,?,?,NULL)", (ts, "ovladanie", self.ENT, old, new)); self.tc.commit()
+
+    def web(self, ts, old, new, kluc, who="admin@x"):
+        self.c.execute("INSERT INTO riadiaca_log VALUES(?,?,?,?,?)", (ts, old, new, kluc, who)); self.c.commit()
+
+    def test_zmena_mimo_webu_z_eventov(self):
+        self.ev(500, "Salón (ESPresense)", "Kuchyňa")   # priamo v ESP/HA
+        r = app.riadiaca_prepnutia(self.cfg, self.c, 600, 2000)
+        self.assertEqual((r["zaciatok"], r["zmeny"]), ("Kuchyňa", []))   # možnosť platná pred rozsahom, v ňom už žiadna zmena
+        r = app.riadiaca_prepnutia(self.cfg, self.c, 0, 2000)
+        z = r["zmeny"][0]
+        self.assertEqual((z["ts"], z["stary"], z["novy"], z["kluc"], z["zdroj"], z["kto"]), (500, "Salón (ESPresense)", "Kuchyňa", "kuchyna", "esp", None))
+        self.assertEqual(r["zaciatok"], "Salón (ESPresense)")
+
+    def test_web_a_event_sa_zluci(self):
+        self.ev(1000, "Salón (ESPresense)", "Salón (Zigbee)"); self.web(1003, "Salón (ESPresense)", "Salón (Zigbee)", "salon")
+        self.ev(1500, "Salón (Zigbee)", "Spálňa")   # druhá zmena len v ESP
+        r = app.riadiaca_prepnutia(self.cfg, self.c, 0, 2000)
+        self.assertEqual([(z["novy"], z["zdroj"], z["kto"], z["cidlo"]) for z in r["zmeny"]],
+                         [("Salón (Zigbee)", "web", "admin@x", "Zigbee"), ("Spálňa", "esp", None, "")])
+
+    def test_web_bez_eventu_zberac_nebezal(self):
+        self.web(1000, "Salón (ESPresense)", "Kuchyňa", "kuchyna")
+        r = app.riadiaca_prepnutia(self.cfg, self.c, 0, 2000)
+        self.assertEqual([(z["ts"], z["novy"], z["zdroj"]) for z in r["zmeny"]], [(1000, "Kuchyňa", "web")])
+        self.assertEqual(r["zaciatok"], "Salón (ESPresense)")
+        self.assertEqual(app.riadiaca_prepnutia(self.cfg, self.c, 1001, 2000)["zmeny"], [])   # mimo rozsahu
+
+    def test_prazdne_a_chybajuca_db(self):
+        self.assertEqual(app.riadiaca_prepnutia(self.cfg, self.c, 0, 2000), {"zaciatok": None, "zmeny": []})
+        self.assertEqual(app.riadiaca_prepnutia(dict(self.cfg, TC_DB="/nonexistent/tc.db"), self.c, 0, 2000), {"zaciatok": None, "zmeny": []})
+
+    def test_series_a_day_nesu_riadiaca(self):
+        now = int(time.time())
+        self.ev(now - 3600, "Salón (ESPresense)", "Kuchyňa")
+        code, out = app.series_get(self.cfg, {"k": ["detska"], "days": ["1"]})
+        self.assertEqual(code, 200)
+        self.assertEqual([z["novy"] for z in out["riadiaca"]["zmeny"]], ["Kuchyňa"])
+        if "bojler" in app.SERIES_KEYS:
+            self.assertNotIn("riadiaca", app.series_get(self.cfg, {"k": ["bojler"]})[1])
+        d = app.day(self.cfg, time.strftime("%Y-%m-%d", time.localtime(now - 3600)))
+        self.assertIn("riadiaca", d)
+
+
+class Nesulad(Tmp):
+    """Nesúlad selectu „Riadiaca izba“ s referenčnou izbou profilu a verzia firmvéru ESP (HTTP odpovede ESP sú mockované)."""
+    OPTS = ["Salón (ESPresense)", "Salón (Zigbee)", "Kuchyňa", "Spálňa"]
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(profil.save(custom_profile()), [])
+        app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+        app._fw_cache.update(t=0.0, ttl=0, v=None)
+
+    @staticmethod
+    def _resp(d):
+        r = mock.MagicMock(); r.read.return_value = json.dumps(d).encode(); r.__enter__.return_value = r
+        return r
+
+    def _esp(self, stav, fw="2.12.0"):
+        def f(url, timeout=None):
+            u = url if isinstance(url, str) else url.full_url
+            if "/select/" in u:
+                return self._resp({"value": stav, "option": self.OPTS})
+            if "/text_sensor/" in u:
+                if fw is None:
+                    raise urllib.error.HTTPError(u, 404, "nf", {}, None)
+                return self._resp({"value": fw, "state": fw})
+            raise OSError(u)
+        return f
+
+    def test_zhoda_bez_nesuladu(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Salón (Zigbee)")):
+            i = app.riadiaca_info(self.cfg, force=True)
+        self.assertEqual(i["stav"], "Salón (Zigbee)"); self.assertIsNone(i["nesulad"])
+
+    def test_nesulad(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa")):
+            i = app.riadiaca_info(self.cfg, force=True)
+        self.assertEqual(i["nesulad"], {"esp_izba": "spalna", "profil_izba": "salon"})
+
+    def test_zosuladenie_cez_post(self):
+        """POST /api/riadiaca s aktuálnou možnosťou ESP prenesie referenčnú izbu do profilu a reštartuje služby."""
+        self.cfg["DRY_RUN"] = "0"
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa")), \
+                mock.patch.object(app._agent_mod, "esp_set_select"), mock.patch.object(app.time, "sleep"), \
+                mock.patch.object(app, "restart_services", return_value={"ok": True}) as rs:
+            code, out = app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "admin@x")
+            self.assertEqual(code, 200, out); self.assertTrue(out["restart"]); rs.assert_called_once()
+            self.assertEqual(profil.reference_room(), "spalna")
+            self.assertIsNone(app.riadiaca_info(self.cfg, force=True)["nesulad"])
+
+    def test_firmver(self):
+        need = app._mm(app.FW_MIN)
+        for fw, stary in (("%d.%d.0" % (need[0], need[1] + 1), False), ("%d.%d.9" % need, False), ("1.0.0", True), (None, True)):
+            app._fw_cache.update(t=0.0, ttl=0, v=None)
+            with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa", fw)):
+                f = app.firmver_info(self.cfg, {"stav": "x"})
+            self.assertEqual(f["stary"], stary, fw); self.assertEqual(f["hint"], stary); self.assertEqual(f["verzia"], fw)
+
+    def test_firmver_hint_bez_riadiacej_a_nedostupne(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("x", "9.9.9")):
+            self.assertTrue(app.firmver_info(self.cfg, None)["hint"])      # ESP odpovedá, ale select nemá
+        app._fw_cache.update(t=0.0, ttl=0, v=None)
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=OSError("down")):
+            f = app.firmver_info(self.cfg, None)
+        self.assertTrue(f["nedostupne"]); self.assertFalse(f["hint"]); self.assertFalse(f["stary"])
+
+    def test_agent_text_nesuladu(self):
+        ns = app._agent_mod.riadiaca_nesulad("Spálňa", app.riadiaca_mapa(self.OPTS, profil.load()["izby"]))
+        self.assertEqual(ns["esp_izba"], "spalna")
+        for lang in ("sk", "en"):
+            self.assertIn("Spálňa", app.tr("srv.prompt.riad_nesulad", lang, esp="Spálňa", profil="Salón"))
 
 
 class Http(Tmp):

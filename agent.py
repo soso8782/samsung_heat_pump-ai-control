@@ -862,12 +862,47 @@ def esp_set_number(cfg, name, value):
 
 SELECT_ENT = "Režim izbovej regulácie"
 SELECT_OPTIONS = ("Vypnutá", "Posun krivky")   # „Vypínanie kúrenia“ sa nikdy nepoužije
+RIADIACA_ENT = "Riadiaca izba"   # select v ESP: čidlo, podľa ktorého beží izbová regulácia (mení ho len správca cez web)
+
+
+def riadiaca_mapa(options, izby):
+    """[{moznost, kluc, cidlo}] pre možnosti selectu „Riadiaca izba“, ktoré patria izbe z profilu (najdlhší zhodný názov vyhráva)."""
+    out = []
+    for o in options:
+        best = None
+        for r in izby:
+            n = r.get("nazov") or ""
+            if n and (o == n or o.startswith(n + " (")) and (best is None or len(n) > len(best["nazov"])):
+                best = r
+        if best:
+            out.append({"moznost": o, "kluc": best["kluc"], "cidlo": o[len(best["nazov"]):].strip().strip("()").strip()})
+    return out
+
+
+def esp_select_get(cfg, name, timeout=3):
+    """(stav, možnosti) selectu z REST API ESP; pri chybe vyhodí výnimku."""
+    url = "%s/select/%s?detail=all" % (cfg["ESP_URL"], urllib.parse.quote(name, safe=""))
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    opts = [x for x in (d.get("option") or []) if isinstance(x, str)]
+    stav = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
+    return (stav if isinstance(stav, str) else None), opts
+
+
+def riadiaca_nesulad(stav, moznosti, p=None):
+    """{esp_izba, profil_izba} (kľúče izieb), ak izba zo selectu „Riadiaca izba“ nie je referenčná izba profilu, inak None."""
+    m = next((x for x in moznosti if x["moznost"] == stav), None)
+    ref = profil.reference_room(p)
+    if m and m["kluc"] != ref:
+        return {"esp_izba": m["kluc"], "profil_izba": ref}
+    return None
 
 
 def esp_set_select(cfg, name, option):
-    """Jediný zápis do selectu ESP (porovnávací test A/B). Povolené LEN „Režim izbovej regulácie“ = „Vypnutá“ / „Posun krivky“,
-    inak ValueError. Pri DRY_RUN nič neodošle, len zaloguje (rovnako ako esp_set_number)."""
-    if name != SELECT_ENT or option not in SELECT_OPTIONS:
+    """Jediný zápis do selectu ESP. Povolené LEN „Režim izbovej regulácie“ = „Vypnutá“ / „Posun krivky“ (porovnávací test A/B)
+    a „Riadiaca izba“ (voľbu overí volajúci voči možnostiam z ESP), inak ValueError. Pri DRY_RUN nič neodošle, len zaloguje."""
+    ok = (name == SELECT_ENT and option in SELECT_OPTIONS) or (name == RIADIACA_ENT and isinstance(option, str) and 0 < len(option) <= 64)
+    if not ok:
         raise ValueError(tr("srv.run.select_not_allowed", i18n.home_lang(cfg), name=name, opt=option))
     if is_dry(cfg):
         print("[DRY_RUN] zápis do ESP preskočený: select %s = %s" % (name, option), flush=True)
@@ -964,6 +999,15 @@ def build_input(cfg, c, now, reasons=None, pre=None):
     prevl = ["%s: %s" % (time.strftime("%d.%m. %H:%M", time.localtime(t)), (s or "")[:400]) for t, s in prev]
     notes = tcq(cfg, "SELECT ts, title FROM notes ORDER BY ts DESC LIMIT 5")
     notel = ["%s %s" % (time.strftime("%d.%m. %H:%M", time.localtime(t)), ti) for t, ti in notes]
+    try:   # nesúlad: select „Riadiaca izba“ v ESP ukazuje inú izbu než referenčná izba v profile (len informácia, agent nič nemení)
+        p = profil.load()
+        st, ops = esp_select_get(cfg, RIADIACA_ENT)
+        ns = riadiaca_nesulad(st, riadiaca_mapa(ops, p["izby"]), p)
+        if ns:
+            nm = {r["kluc"]: r["nazov"] for r in p["izby"]}
+            notel.insert(0, _p("riad_nesulad", ml, esp=nm.get(ns["esp_izba"], ns["esp_izba"]), profil=nm.get(ns["profil_izba"], ns["profil_izba"])))
+    except Exception:
+        pass
     head = ([_p("why_now", ml) + "; ".join(reasons), ""] if reasons else [])
     try:
         ab = abtest.llm_text(c, now, ml)
@@ -1525,6 +1569,8 @@ def next_run_after(now, interval_min):
 
 WD_COLLECTOR_STALE_S = 900
 WD_BACKUP_MAX_S = 1800
+CIDLO_TEXT = "Čakám na teplotu"          # text firmvéru v "Stav izbovej regulácie", keď riadiace čidlo mlčí
+CIDLO_STAV_ENTITA = "Stav izbovej regulácie"
 
 
 def _esp_val(cfg, domain, name):
@@ -1600,6 +1646,31 @@ def event_trigger(cfg, c, alerts, prev_kinds, now):
     return reason
 
 
+def cidlo_vypadok(cfg, now):
+    """Ako dlho (s) mlčí riadiace izbové čidlo, alebo None. Zdroje: (1) posledná vzorka sledovanej teploty v tc.db
+    (zberač ukladá len platné hodnoty), (2) text "Čakám na teplotu" v stave izbovej regulácie (začiatok súvislého úseku
+    v udalostiach). Pri neaktuálnom zberači sa nehodnotí (rieši ho poplach zberača). Vráti najdlhší z oboch údajov."""
+    ent = profil.device_entity("sledovana")
+    if not ent:
+        return None
+    r = tcq(cfg, "SELECT v FROM meta WHERE k='last_sample'")
+    if now - int((r[0][0] if r else 0) or 0) > WD_COLLECTOR_STALE_S:
+        return None
+    out = None
+    r = tcq(cfg, "SELECT max(ts) FROM samples WHERE entity=?", (ent,))
+    if r and r[0][0] is not None:
+        out = now - int(r[0][0])
+    since = None
+    for ts, new in tcq(cfg, "SELECT ts, new FROM events WHERE entity=? ORDER BY ts DESC LIMIT 500", (CIDLO_STAV_ENTITA,)):
+        if CIDLO_TEXT in (new or ""):
+            since = ts
+        else:
+            break
+    if since is not None:
+        out = max(out or 0, now - int(since))
+    return out
+
+
 def watchdog_tick(cfg, c, wd, now=None):
     """Jedna kontrola strážcu (každú minútu z watchdog_loop). `wd` = slovník s pamäťou vlákna. Vracia zoznam poplachov."""
     now = int(now or time.time())
@@ -1664,6 +1735,23 @@ def watchdog_tick(cfg, c, wd, now=None):
         elif get_state(c, "wd_backup_since"):
             set_state(c, "wd_backup_since", "")
 
+    def chk_cidlo():
+        try:
+            lim = int(float(cfg.get("CIDLO_STALE_MIN") or 60)) * 60
+        except ValueError:
+            lim = 3600
+        dur = cidlo_vypadok(cfg, now) if lim > 0 else None
+        if dur is not None and dur > lim:
+            alerts["cidlo"] = tr("srv.agent.cidlo", hl, n=dur // 60)
+            if get_state(c, "wd_cidlo_sent") != "1":          # jedno upozornenie na výpadok
+                ok, e = notify_("cidlo", tr("srv.agent.cidlo_t", hl), alerts["cidlo"])
+                if ok or e == "nenastavené":
+                    set_state(c, "wd_cidlo_sent", "1")
+        elif get_state(c, "wd_cidlo_sent") == "1" and (dur is not None or lim <= 0):   # dur None = nehodnotené, nie obnovené
+            ok, e = notify_("cidlo_ok", tr("srv.agent.cidlo_ok_t", hl), tr("srv.agent.cidlo_ok", hl))
+            if ok or e == "nenastavené":
+                set_state(c, "wd_cidlo_sent", "0")
+
     def chk_runs():
         rows = c.execute("SELECT status, error FROM runs WHERE status NOT IN ('info','rutina') ORDER BY ts DESC LIMIT 3").fetchall()
         if len(rows) == 3 and all(r[0] == "chyba" for r in rows):
@@ -1697,6 +1785,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_collector)
     safe(chk_ha)
     safe(chk_esp)
+    safe(chk_cidlo)
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))

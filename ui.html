@@ -514,6 +514,12 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
 .room .rt.na{font:400 13px var(--f-body);color:var(--mut)}
 .room .rd{font-size:12.5px;color:var(--mut);white-space:nowrap;min-width:64px;text-align:right}
 .room svg{width:14px;height:14px;flex:none}
+.room.click{cursor:pointer;transition:border-color .15s,background .15s}
+.room.click:hover{border-color:var(--copper-2);background:var(--raise)}
+.room.click:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+.room.sel:not(.main){border-color:var(--copper-2)}
+.riadsel{margin-top:12px;padding:12px 14px;border:1px solid var(--copper-2);border-radius:14px;background:var(--panel-2)}
+.riadsel .sub{margin:8px 0 0}
 .rtgt{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .rtgt .tv2{font:400 20px var(--f-display);font-variant-numeric:tabular-nums;min-width:70px;text-align:center}
 .rtgt .stp{display:inline-flex;align-items:center;gap:8px}
@@ -565,6 +571,11 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
 .cl{fill:none;stroke:var(--copper);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .ct{fill:none;stroke:var(--ink-2);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}
 .chv{stroke:var(--line-2);stroke-width:1}
+.cmk{stroke:var(--ink-2);stroke-width:1.2;stroke-dasharray:2 3;opacity:.85}
+svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
+.cband{opacity:.9}
+.crl{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:12px;color:var(--mut)}
+.crl i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .chd{fill:var(--copper);stroke:var(--panel);stroke-width:2}
 /* reagovanie */
 @media (max-width:1240px){#systext{display:none}}
@@ -697,6 +708,8 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
   <section class="panel pad" id="roomspanel">
     <div class="head"><h2 data-i18n="nav.izby">Izby</h2><span class="sub" id="roomsub" data-i18n="prehlad.izby_sub">Aktuálna teplota a rozdiel oproti cieľu</span></div>
     <div class="rooms" id="rooms" aria-live="polite"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
+    <div id="riadsel"></div>
+    <div id="riadwarn"></div>
     <div id="roomtarget"></div>
     <div class="sub usr" id="userlast" style="margin-top:14px" hidden></div>
   </section>
@@ -2052,14 +2065,89 @@ const WIN_SVG = `<svg viewBox="0 0 14 14" aria-hidden="true"><rect class="winico
 function renderRooms(s) {
   const box = $("#rooms"); if (!box) return;
   const c = s.current || {}, wopen = new Set((s.windows_open || []).map(o => o && o.room).filter(Boolean)), ciel = c[RT_KEY];
+  const pick = riadOn(s);
   box.innerHTML = ROOMS.map(([n, l], i) => {
     const v = c[n], key = RKEYS[i], main = i === 0, win = wopen.has(key);
     const diff = v != null && ciel != null ? (Math.abs(v - ciel) < .05 ? t("prehlad.na_cieli") : (v > ciel ? "+" : "−") + f(Math.abs(v - ciel)) + " °C") : "";
-    return `<div class="room${main ? " main" : ""}"><span class="rn">${esc(l)}${main ? "<small>" + t("prehlad.riadiaca") + "</small>" : ""}</span>` +
+    const att = pick ? ` click${riad.open === key ? " sel" : ""}" role="button" tabindex="0" data-rk="${esc(key)}" aria-expanded="${riad.open === key}" title="${esc(t("prehlad.riad_klik"))}` : "";
+    return `<div class="room${main ? " main" : ""}${att}"><span class="rn">${esc(l)}${main ? "<small>" + t("prehlad.riadiaca") + "</small>" : ""}</span>` +
       (win ? `<span title="${esc(t("prehlad.otvorene_okno"))}" aria-label="${esc(t("prehlad.otvorene_okno"))}" role="img">${WIN_SVG}</span>` : "") +
       (v != null ? `<span class="rt">${f(v)}<small class="mut" style="font-size:.6em"> °C</small></span><span class="rd" title="${esc(t("prehlad.rozdiel_cielu"))}">${diff}</span>` : `<span class="rt na">${t("spolocne.bez_udaja")}</span><span class="rd"></span>`) + `</div>`; }).join("");
+  renderRiad(s);
+  renderRiadWarn(s);
   renderRoomTarget(s);
 }
+/* správca: firmvér ESP (verzia / hint „starší“) a nesúlad riadiacej izby v ESP s referenčnou izbou v profile */
+let riadWarnHtml = "";
+function renderRiadWarn(s) {
+  const box = $("#riadwarn"); if (!box) return;
+  let html = "";
+  if (!isUser()) {
+    const fw = s.firmver || {}, ns = s.riadiaca && s.riadiaca.nesulad, nm = k => (RN[k] != null ? RN[k] : k);
+    if (fw.hint) html += `<p class="sub" role="status" style="margin-top:10px;color:var(--crit-ink)">${esc(t("prehlad.fw_starsi"))}</p>`;
+    if (ns) html += `<div class="riadsel"><b style="color:var(--crit-ink)">${esc(t("prehlad.riad_nesulad", {esp: nm(ns.esp_izba), profil: nm(ns.profil_izba)}))}</b>` +
+      `<div class="btnrow"><button type="button" class="btn sm primary" data-rz="1"${riad.busy ? " disabled" : ""}>${esc(t("prehlad.riad_zosuladit"))}</button></div></div>`;
+    if (fw.verzia) html += `<p class="sub" style="margin-top:10px">${esc(t("prehlad.fw_verzia", {v: fw.verzia}))}</p>`;
+  }
+  if (html === riadWarnHtml) return; riadWarnHtml = html; box.innerHTML = html;
+}
+$("#riadwarn").addEventListener("click", async e => {
+  if (!e.target.closest("[data-rz]") || riad.busy) return;
+  const s = statusData || {}, ns = s.riadiaca && s.riadiaca.nesulad; if (!ns) return;
+  const o = (s.riadiaca.moznosti || []).find(x => x.moznost === s.riadiaca.stav); if (!o) return;
+  if (!window.confirm(t("prehlad.riad_zosuladit_potvrd", {room: RN[ns.esp_izba] != null ? RN[ns.esp_izba] : ns.esp_izba}))) return;
+  riad.busy = true; riad.msg = {t: t("spolocne.ukladam"), ok: true}; renderRooms(s);
+  try { const r = await api("api/riadiaca", {moznost: o.moznost});
+    if (r.error) riad.msg = {t: r.error, ok: false};
+    else { riad.msg = {t: t("prehlad.riad_zosuladene", {room: RN[ns.esp_izba] != null ? RN[ns.esp_izba] : ns.esp_izba}) + (r.note ? " " + r.note : ""), ok: true};
+      if (r.restart) setTimeout(() => location.reload(), 15000);
+      else { try { await loadStatus(); } catch (x) {} setTimeout(() => { riad.msg = null; renderRooms(statusData || {}); }, 8000); } }
+  } catch (err) { if (!err.auth) riad.msg = {t: t("spolocne.server_neodpoveda"), ok: false}; }
+  riad.busy = false; renderRooms(statusData || {});
+});
+/* správca: klik na izbu = výber riadiacej izby (select „Riadiaca izba“ v ESP); izba s viacerými čidlami ponúkne výber čidla.
+   Zmena izby prepne referenčnú izbu v profile a reštartuje služby; zmena čidla v tej istej izbe nie. */
+const riad = {open: null, busy: false, msg: null};
+const riadOn = s => !isUser() && !!(s && s.riadiaca && (s.riadiaca.moznosti || []).length);
+const riadOpts = (s, key) => ((s && s.riadiaca && s.riadiaca.moznosti) || []).filter(o => o.kluc === key);
+let riadHtml = "";
+function renderRiad(s) {
+  const box = $("#riadsel"); if (!box) return;
+  let html = "";
+  if (riad.open && riadOn(s) && RN[riad.open] != null) {
+    const key = riad.open, opts = riadOpts(s, key), cur = s.riadiaca.stav, main = key === RKEYS[0];
+    const msg = riad.msg ? `<span class="sub" role="status" style="margin:0;color:${riad.msg.ok ? "var(--good-ink)" : "var(--crit-ink)"}">${esc(riad.msg.t)}</span>` : "";
+    html = `<div class="riadsel"><b>${esc(t(opts.length > 1 ? "prehlad.riad_titul_cidlo" : "prehlad.riad_titul", {room: RN[key]}))}</b>` +
+      (opts.length ? `<div class="btnrow">` + opts.map(o => { const on = o.moznost === cur;
+        const lbl = opts.length > 1 ? (o.cidlo || RN[key]) : t(on ? "prehlad.riad_aktivna" : "prehlad.riad_nastavit");
+        return `<button type="button" class="btn sm${on ? " primary" : ""}" data-ro="${esc(o.moznost)}" aria-pressed="${on}"${on || riad.busy ? " disabled" : ""}>${esc(lbl)}${on && opts.length > 1 ? " ✓" : ""}</button>`; }).join("") + `</div>`
+        : `<p class="sub">${esc(t("prehlad.riad_bez_cidla"))}</p>`) +
+      (opts.length ? `<p class="sub">${esc(t(main ? "prehlad.riad_pozn_cidlo" : "prehlad.riad_pozn_izba", {room: RN[key]}))}</p>` : "") +
+      `<div class="btnrow"><button type="button" class="btn sm" data-rx="1"${riad.busy ? " disabled" : ""}>${t("spolocne.zrusit")}</button>${msg}</div></div>`;
+  } else if (riad.msg) {
+    html = `<p class="sub" role="status" style="margin-top:10px;color:${riad.msg.ok ? "var(--good-ink)" : "var(--crit-ink)"}">${esc(riad.msg.t)}</p>`;
+  }
+  if (html === riadHtml) return; riadHtml = html; box.innerHTML = html;
+}
+function riadToggle(key) { riad.open = riad.open === key ? null : key; riad.msg = null; renderRooms(statusData || {}); }
+$("#rooms").addEventListener("click", e => { const r = e.target.closest("[data-rk]"); if (r && !riad.busy) riadToggle(r.dataset.rk); });
+$("#rooms").addEventListener("keydown", e => { const r = e.target.closest("[data-rk]");
+  if (r && (e.key === "Enter" || e.key === " ") && !riad.busy) { e.preventDefault(); riadToggle(r.dataset.rk); } });
+$("#riadsel").addEventListener("click", async e => {
+  if (e.target.closest("[data-rx]")) { riad.open = null; riad.msg = null; return renderRooms(statusData || {}); }
+  const b = e.target.closest("[data-ro]"); if (!b || riad.busy || !riad.open) return;
+  const key = riad.open, other = key !== RKEYS[0];
+  if (other && !window.confirm(t("prehlad.riad_potvrd", {room: RN[key]}))) return;
+  riad.busy = true; riad.msg = {t: t("spolocne.ukladam"), ok: true}; renderRooms(statusData || {});
+  try { const r = await api("api/riadiaca", {moznost: b.dataset.ro});
+    if (r.error) riad.msg = {t: r.error, ok: false};
+    else { riad.open = null;
+      riad.msg = {t: (r.restart ? t("prehlad.riad_zmenena_restart", {room: RN[key]}) : t("prehlad.riad_zmenena", {room: RN[key]})) + (r.note ? " " + r.note : ""), ok: true};
+      if (r.restart) setTimeout(() => location.reload(), 15000);
+      else { try { await loadStatus(); } catch (x) {} setTimeout(() => { riad.msg = null; renderRooms(statusData || {}); }, 8000); } }
+  } catch (err) { if (!err.auth) riad.msg = {t: t("spolocne.server_neodpoveda"), ok: false}; }
+  riad.busy = false; renderRooms(statusData || {});
+});
 /* záložka Izby: len aktuálne teploty; záložka TÚV: teplota bojlera a cieľ */
 /* obsah karty izby (zoznam aj detail): názov, okno, teplota, rozdiel voči cieľu / minimu */
 function roomInfo(s, i) {
@@ -2206,9 +2294,23 @@ function chartDraw(id) {
     if (prev === null || t - prev > gap) { line += `M${x} ${y}`; const nx = pts[i + 1]; if (!nx || nx[0] - t > gap) line += "h.01"; } else line += `L${x} ${y}`; prev = t; });
   let tp = ""; tg.forEach(([t, v], i) => { const x = r1(X(Math.max(t, t0))); tp += i ? `H${x}V${r1(Y(v))}` : `M${x} ${r1(Y(v))}`; });
   const lastT = pts[pts.length - 1][0]; if (tg.length && lastT > tg[tg.length - 1][0]) tp += `H${r1(X(lastT))}`;
+  /* prepnutia riadiacej izby: pás pri spodku grafu (podľa čidla), zvislé značky s popisom „Riadiaca: <možnosť>“ a legenda */
+  const rd = d.riadiaca || {}, rz = (rd.zmeny || []).filter(z => z.ts >= t0 && z.ts <= t1), segs = [];
+  if (rd.zaciatok || rz.length) { let cur = rd.zaciatok || rz[0].stary, from = t0;
+    for (const z of rz) { segs.push([from, z.ts, cur]); cur = z.novy; from = z.ts; } segs.push([from, t1, cur]); }
+  const rnames = [...new Set(segs.map(x => x[2]).filter(Boolean))], rcol = o => "var(--s" + (rnames.indexOf(o) % 8 + 1) + ")";
+  let rb = "", lastLx = -1e9;
+  if (rz.length || rnames.length > 1 || (rnames.length === 1 && rd.zaciatok)) {
+    for (const [a, b, o] of segs) if (o && b > a) rb += `<rect class="cband" x="${r1(X(a))}" y="${T + ph - 4}" width="${r1(Math.max(1, X(b) - X(a)))}" height="4" fill="${rcol(o)}"><title>${esc(t("izby.riadiaca_znacka", {o}))}</title></rect>`;
+    for (const z of rz) { const x = X(z.ts), lab = t("izby.riadiaca_znacka", {o: z.novy}), right = x > W - R - 110;
+      rb += `<g><title>${esc(t("izby.riadiaca_tip", {o: z.novy, w: wdLong(z.ts) + " " + dmShort(z.ts) + " " + hm(z.ts)}))}${z.kto ? " · " + esc(z.kto) : ""}</title><line class="cmk" x1="${r1(x)}" x2="${r1(x)}" y1="${T}" y2="${T + ph}"/>`;
+      if (Math.abs(x - lastLx) > 96) { rb += `<text class="cml" x="${r1(x + (right ? -4 : 4))}" y="${T + 10}" text-anchor="${right ? "end" : "start"}">${esc(lab)}</text>`; lastLx = x; }
+      rb += `</g>`; }
+  }
   const s = d.stats || {}, mn = num(s.min) ?? Math.min(...pts.map(p => p[1])), mx = num(s.max) ?? Math.max(...pts.map(p => p[1])), av = num(s.avg) ?? pts.reduce((a, p) => a + p[1], 0) / pts.length;
   plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(t("izby.graf_aria", {days, mn: f(mn), av: f(av), mx: f(mx)}))}">${g}` +
-    (tp ? `<path class="ct" d="${tp}"/>` : "") + `<path class="cl" d="${line}"/><line class="chv" y1="${T}" y2="${T + ph}" style="display:none"/><circle class="chd" r="4.5" style="display:none"/></svg><div class="ctip" hidden></div>`;
+    (tp ? `<path class="ct" d="${tp}"/>` : "") + rb + `<path class="cl" d="${line}"/><line class="chv" y1="${T}" y2="${T + ph}" style="display:none"/><circle class="chd" r="4.5" style="display:none"/></svg><div class="ctip" hidden></div>` +
+    (rb && rnames.length ? `<div class="crl"><span>${t("izby.riadiaca_legenda")}</span>${rnames.map(o => `<span><i style="background:${rcol(o)}"></i>${esc(o)}</span>`).join("")}</div>` : "");
   sb.innerHTML = [[t("spolocne.min_l"), mn], [t("spolocne.priemer_l"), av], [t("spolocne.max_l"), mx]].map(([l, v]) => `<div>${l}<b>${f(v)} °C</b></div>`).join("");
   const svg = plot.querySelector("svg"), tip = plot.querySelector(".ctip"), vl = svg.querySelector(".chv"), dot = svg.querySelector(".chd");
   const hide = () => { tip.hidden = true; vl.style.display = dot.style.display = "none"; };

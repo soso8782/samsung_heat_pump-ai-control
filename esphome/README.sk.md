@@ -79,3 +79,5 @@ Nepovinné entity, ktoré v YAML zostanú zakomentované, v profile nechaj práz
 Izbové teploty (pole `esp` v izbách profilu) môžu pochádzať z ľubovoľného zdroja, ktorý ESP vystaví (Zigbee, BLE, entity
 z Home Assistantu cez `platform: homeassistant`). Alternatíva: v profile nechaj `esp` prázdne a použi len HA senzory
 (pole `ha`) – izba potom nemá živú hodnotu z ESP, ale história a štatistiky z HA fungujú.
+
+**Riadiaca izba.** Select „Riadiaca izba“ v `m5stack-tc.yaml` určuje, podľa ktorého čidla beží izbová regulácia; web ho prepína kliknutím na izbu v karte Izby (správca). Aplikácia páruje možnosť s izbou podľa názvu – „<názov izby>“ alebo „<názov izby> (<čidlo>)“, ak má izba viac čidiel. Pri pridaní izby/čidla doplň možnosť do selectu aj vetvu v skripte `riadiaca_nastav` (rovnaké poradie) a čidlu daj `id` a `on_value` ako ostatným.
