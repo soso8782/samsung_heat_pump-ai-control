@@ -307,11 +307,15 @@ class Nesulad(Tmp):
         r = mock.MagicMock(); r.read.return_value = json.dumps(d).encode(); r.__enter__.return_value = r
         return r
 
-    def _esp(self, stav, fw="2.12.0"):
+    def _esp(self, stav, fw="2.12.0", zal=False):
         def f(url, timeout=None):
             u = url if isinstance(url, str) else url.full_url
             if "/select/" in u:
                 return self._resp({"value": stav, "option": self.OPTS})
+            if "/binary_sensor/" in u:
+                if zal is None:
+                    raise urllib.error.HTTPError(u, 404, "nf", {}, None)
+                return self._resp({"value": zal, "state": "ON" if zal else "OFF"})
             if "/text_sensor/" in u:
                 if fw is None:
                     raise urllib.error.HTTPError(u, 404, "nf", {}, None)
@@ -347,6 +351,16 @@ class Nesulad(Tmp):
             with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa", fw)):
                 f = app.firmver_info(self.cfg, {"stav": "x"})
             self.assertEqual(f["stary"], stary, fw); self.assertEqual(f["hint"], stary); self.assertEqual(f["verzia"], fw)
+
+    def test_zalozne_cidlo(self):
+        """Príznak „zalozne“ v riadiaca bloku: binárny senzor ESP; starší firmvér (404) alebo chyba = False."""
+        for zal, exp in ((True, True), (False, False), (None, False)):
+            app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+            with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Salón (Zigbee)", zal=zal)):
+                i = app.riadiaca_info(self.cfg, force=True)
+            self.assertIs(i["zalozne"], exp, zal)
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertIs(app.zalozne_get(self.cfg), False)
 
     def test_firmver_hint_bez_riadiacej_a_nedostupne(self):
         with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("x", "9.9.9")):

@@ -123,7 +123,7 @@ def on_freq(c, val):
 def kind_for(domain, name):
     if name in TECH:
         return "kompresor"
-    if name.startswith("Stav izbovej"):
+    if name.startswith("Stav izbovej") or name.startswith("Záložné čidlo"):
         return "regulacia"
     if domain in ("switch", "select") or name.startswith("3-cestný"):
         return "ovladanie"

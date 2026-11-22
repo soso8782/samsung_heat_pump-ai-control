@@ -790,6 +790,7 @@
  "prehlad.t_voda_vystup": "Water · outlet",
  "prehlad.tc": "Heat pump",
  "prehlad.vonku": "Outside",
+ "prehlad.zalozne_cidlo": "The room control sensor is not sending data – regulation is using the backup sensor in the same room",
  "prehlad.zberac_ticho": "The collector has not sent any room temperatures yet.",
  "prehlad.zmena_cez_agenta": "Ask for a temperature change via a message to the agent.",
  "prehlad.znizit_05": "Decrease by 0.5 °C",

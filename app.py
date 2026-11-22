@@ -611,6 +611,21 @@ _riadiaca_cache = {"t": 0.0, "ttl": 0, "v": None}
 riadiaca_mapa = _agent_mod.riadiaca_mapa
 
 
+ZALOZNE_ENT = "Záložné čidlo aktívne"
+
+
+def zalozne_get(cfg, timeout=3):
+    """True, ak ESP riadi izbu podľa záložného čidla (binárny senzor „Záložné čidlo aktívne“); starší firmvér / chyba -> False."""
+    try:
+        url = "%s/binary_sensor/%s" % (cfg["ESP_URL"], urllib.parse.quote(ZALOZNE_ENT, safe=""))
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        v = d.get("value")
+        return v is True or (v is None and str(d.get("state", "")).upper() == "ON")
+    except Exception:
+        return False
+
+
 def riadiaca_info(cfg, force=False):
     """Stav selectu „Riadiaca izba“ z ESP ({stav, moznosti}) alebo None (ESP ho nemá / neodpovedá). Výsledok sa drží 30 s (chyba 5 min)."""
     now = time.time()
@@ -622,7 +637,7 @@ def riadiaca_info(cfg, force=False):
         if opts:
             p = profil.load()
             mo = riadiaca_mapa(opts, p["izby"])
-            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p)}
+            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p), "zalozne": zalozne_get(cfg)}
     except Exception:
         v = None
     _riadiaca_cache.update(t=now, ttl=30 if v else 300, v=v)

@@ -790,6 +790,7 @@
  "prehlad.t_voda_vystup": "Voda · výstup",
  "prehlad.tc": "Tepelné čerpadlo",
  "prehlad.vonku": "Vonku",
+ "prehlad.zalozne_cidlo": "Riadiace čidlo izby neposiela dáta – regulácia beží podľa záložného čidla v tej istej izbe",
  "prehlad.zberac_ticho": "Zberač zatiaľ neposlal teploty izieb.",
  "prehlad.zmena_cez_agenta": "Zmenu teploty požiadaj cez správu agentovi.",
  "prehlad.znizit_05": "Znížiť o 0,5 °C",
