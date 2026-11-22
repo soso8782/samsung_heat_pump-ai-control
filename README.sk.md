@@ -45,7 +45,11 @@ a agenta“. *English documentation: [README.md](README.md).*
   pozri [Integrácia do Home Assistanta](#integrácia-do-home-assistanta).
 - **AI agent** – každú hodinu (alebo pri udalosti) vyhodnotí stav, predpoveď počasia a históriu; v režime *Radí* len odporúča,
   v režime *Riadi* mení povolené nastavenia. Denné „učenie“ z predošlých dní, správy agentovi, týždenné súhrny, A/B test.
-- **TÚV** – plánovač a manuálny ohrev teplej vody.
+- **TÚV** – plánovač a manuálny ohrev teplej vody, voliteľne v lacnej tarife a najteplejších hodinách.
+- **Tarifa, útlm, Preč z domu** – voliteľné prikúrenie pred drahou tarifou, nočný útlm s naučeným ranným nábehom
+  a režim Preč z domu (aj podľa prítomnosti v HA); všetko predvolene vypnuté a v medziach agenta.
+- **Zdravie čerpadla** – trendy COP, odmrazovania, prietoku a cyklovania pri rovnakom počasí s upozornením na zhoršenie.
+- **Odhad nákladov a sezóna** – odhad do konca mesiaca a sezóny, prehľad sezóny prepočítaný na dennostupne.
 - **Upozornenia** – Web Push (PWA na iPhone/Android) a HA webhook: chyba TČ, dohrev, okno otvorené pri kúrení, kredit, …
 - **Prihlásenie** – heslo pre správcu, voliteľne Cloudflare Tunnel + Access (overenie JWT), role admin/user.
 - **Štatistiky** – hodinová databáza, cykly kompresora, poruchy, porovnania, export.

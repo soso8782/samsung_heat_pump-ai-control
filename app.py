@@ -1398,10 +1398,7 @@ def session_valid(c, tok):
 
 
 LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
-USER_GET = ("/api/status", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/naklady/odhad", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
-USER_GET = ("/api/status", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/tarifa", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
-USER_POST = ("/api/message", "/api/user_target", "/api/tuv_boost", "/api/logout", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test", "/api/push/remove")
-USER_GET = ("/api/status", "/api/utlm", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
+USER_GET = ("/api/status", "/api/utlm", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/naklady/odhad", "/api/tarifa", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
 USER_POST = ("/api/message", "/api/user_target", "/api/utlm", "/api/tuv_boost", "/api/logout", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test", "/api/push/remove")
 NO_PERM = {"error": "Na túto akciu nemáš oprávnenie."}
 

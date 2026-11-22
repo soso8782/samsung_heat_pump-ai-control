@@ -327,6 +327,12 @@ def tick(cfg, c, now=None):
         return restore(cfg, c, tr("srv.tarifa.w_agent_off", hl)) if active else tr("srv.tarifa.t_off", hl)
     if abtest.active(c):
         return restore(cfg, c, tr("srv.tarifa.w_abtest", hl)) if active else tr("srv.tarifa.t_abtest", hl)
+    try:    # nočný útlm / ranný nábeh / Preč z domu majú prednosť (menia ten istý cieľ izby; inak by sa navzájom prepisovali)
+        import utlm
+        if utlm.load_run(c) or utlm.load_away(c):
+            return restore(cfg, c, tr("srv.tarifa.w_dovod", hl, why="utlm")) if active else "utlm"
+    except Exception:
+        pass
     if not get_state(c, "tarifa_od", ""):
         set_state(c, "tarifa_od", time.strftime("%Y-%m-%d", time.localtime(now)))
     p = plan(cfg, c, now)

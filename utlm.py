@@ -575,18 +575,37 @@ def presence_tick(cfg, c, now):
 
 
 # ---------- stav pre web ----------
+_status_cache = {}
+
+
+def _target_sample(cfg, now, max_age=1800):
+    """Posledná vzorka cieľovej izbovej teploty zo zberača (tc.db) nie staršia ako max_age, inak None."""
+    ent = _agent().ROOM_TARGET_ENT
+    if not ent:
+        return None
+    try:
+        rows = tcq(cfg, "SELECT value FROM samples WHERE entity=? AND ts>? AND ts<=? AND value IS NOT NULL ORDER BY ts DESC LIMIT 1",
+                   (ent, now - max_age, now))
+    except Exception:
+        return None
+    return float(rows[0][0]) if rows else None
+
+
 def status_block(cfg, c, now=None, admin=True):
     now = int(now or time.time())
     cu = load_cfg(c)
     run = load_run(c)
-    try:
-        cur = _agent().room_target_current(cfg)
-    except Exception:
-        cur = None
-    try:
-        p = plan(cfg, c, now, base=(run or {}).get("base") if run else cur)
-    except Exception:
-        p = {"state": "normal", "feature": None, "rate": None}
+    # /api/status sa volá často: cieľ z poslednej vzorky zberača (nie naživo z ESP) a plán najviac raz za minútu
+    base = (run or {}).get("base") if run else _target_sample(cfg, now)
+    key = (now // 60, base, json.dumps(cu, sort_keys=True, default=str), mode(c), mode(c, "prec_mode"), json.dumps(load_away(c), default=str))
+    if _status_cache.get("key") == key:
+        p = _status_cache["p"]
+    else:
+        try:
+            p = plan(cfg, c, now, base=base)
+        except Exception:
+            p = {"state": "normal", "feature": None, "rate": None}
+        _status_cache.update(key=key, p=p)
     nm, am = mode(c), mode(c, "prec_mode")
     away = load_away(c)
     out = {"mode": nm, "prec_mode": am, "state": p["state"],

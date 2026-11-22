@@ -194,6 +194,18 @@ class Riadenie(Base):
         self.assertEqual(self.writes, [])
         self.assertEqual(self.actions(), [])
 
+    def test_utlm_ma_prednost(self):
+        import utlm
+        with mock.patch.object(utlm, "load_run", return_value={"base": 22.0}):
+            self.assertEqual(tarifa.tick(self.cfg, self.c, T(4)), "utlm")   # počas útlmu / nábehu tarifa nič nemení
+        self.assertEqual(self.writes, [])
+        self.tick(4)                                                       # po útlme normálne
+        self.assertEqual(self.writes, [(ENT, 22.5)])
+        with mock.patch.object(utlm, "load_away", return_value={"since": 1}):
+            tarifa.tick(self.cfg, self.c, T(5))                            # Preč z domu: vlastnú zmenu vráti
+        self.assertEqual(self.writes[-1], (ENT, 22.0))
+        self.assertIsNone(tarifa._state_active(self.c))
+
     def test_ab_test_pocas_predhrevu_vrati(self):
         self.tick(4)
         self.assertEqual(self.esp[ENT], 22.5)

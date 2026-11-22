@@ -48,7 +48,11 @@ web UI under Settings → "Language of notifications and the agent". *Slovak doc
 - **AI agent** – evaluates the state, the weather forecast and the history every hour (or on an event); in *Advise only* mode it
   just makes recommendations, in *Control* mode it changes the allowed settings. Daily "learning" from previous days, messages
   to the agent, weekly summaries, A/B test.
-- **DHW** – scheduler and manual boost of domestic hot water.
+- **DHW** – scheduler and manual boost of domestic hot water, optionally in the cheap tariff and the warmest hours.
+- **Tariff, night setback, away mode** – optional pre-heating before the expensive tariff, night setback with a learned
+  morning ramp and an away mode (also from HA presence); all off by default and within the agent's limits.
+- **Heat pump health** – trends of COP, defrost, flow and cycling at the same weather, with alerts on degradation.
+- **Cost forecast and season** – forecast to the end of the month and season, season report normalized by degree days.
 - **Notifications** – Web Push (PWA on iPhone/Android) and an HA webhook: heat pump error, backup heater, window open while
   heating, credit, …
 - **Login** – administrator password, optionally Cloudflare Tunnel + Access (JWT verification), admin/user roles.

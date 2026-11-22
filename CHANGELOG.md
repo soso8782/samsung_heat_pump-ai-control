@@ -2,6 +2,31 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.15.0] – 2026-11-23
+
+### Pridané
+- **Kúrenie podľa tarify** (`tarifa.py`, predvolene vypnuté `TARIFA_KURENIE=0`): pred blokom VT (`TARIFA_VT_INTERVALY`,
+  napr. `08:00-09:00,18:00-19:00`) mierne zvýši cieľ izby (`TARIFA_PREDKURENIE_C`, 0,5 °C, `TARIFA_PREDSTIH_H` 2 h vopred),
+  počas VT ho zníži (`TARIFA_UTLM_C`) a po VT vráti. Režim Radí len odporúča, Riadi zapisuje. Neznižuje, ak by izba klesla
+  pod minimum + 0,3 °C; nič nerobí v teplom počasí, počas A/B testu, nočného útlmu ani režimu Preč; ručnú zmenu cieľa
+  neprepíše. Vyhodnotenie podielu VT a odhad úspory v karte Spotreba (`GET /api/tarifa`).
+- **TÚV v lacnej tarife** (`TUV_TARIFA=0`): okno ohrevu bojlera mimo VT, prednostne v najteplejších hodinách (vyšší COP).
+- **Nočný útlm a ranný nábeh** (`utlm.py`, predvolene vypnuté): nočný cieľ −1 °C (max −2), nábeh naučený z histórie
+  (rýchlosť ohrevu podľa vonkajšej teploty), pri pomalom dome menší útlm; víkendový čas vstávania.
+- **Režim Preč z domu**: tlačidlo na Prehľade (správca aj používateľ) s časom návratu, voliteľne podľa prítomnosti
+  v Home Assistante (`HA_PRITOMNOST`); dom je pri návrate vykúrený. `GET/POST /api/utlm`.
+- **Zdravie čerpadla** (`zdravie.py`, štatistiky → Zdravie): COP, odmrazovanie, prietok a ΔT pri rovnakej frekvencii,
+  krátke cykly – posledných 7 dní voči 60-dňovému základu pri rovnakej vonkajšej teplote; upozornenie pri zhoršení,
+  týždenný trend. `GET /api/zdravie`.
+- **Odhad nákladov** do konca mesiaca, fakturačného obdobia a sezóny (kWh a € s rozpätím; model podľa dennostupňov,
+  predpoveď počasia na 16 dní, ďalej klimatológia) a **prehľad vykurovacej sezóny** s porovnaním s predošlou
+  (prepočet na dennostupne). `GET /api/naklady/odhad`, `GET /api/sezona`.
+- **Nastavenia → O aplikácii**: nainštalovaná verzia, commit a dátum, verzia firmvéru ESP, kontrola novšej verzie na
+  GitHube (`UPDATE_CHECK`); verzia aj v pätičke.
+
+### Zmenené
+- `/api/status` neberie cieľ izby naživo z ESP pre blok útlmu (posledná vzorka zberača, plán sa počíta najviac raz za minútu).
+
 ## [2.14.0] – 2026-11-22
 
 ### Pridané

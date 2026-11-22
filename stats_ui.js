@@ -13,8 +13,7 @@ const fnumL = (x, n) => typeof window.fnum === "function" ? window.fnum(x, n) : 
 
 const ROOT_ID = "tab-statistiky";
 const SKEY = "kurenie-stats-v1";
-const VIEWS = ["den", "porovnanie", "obdobie", "poruchy", "zdravie"];
-const VIEWS = ["den", "porovnanie", "obdobie", "sezona", "poruchy"];
+const VIEWS = ["den", "porovnanie", "obdobie", "sezona", "poruchy", "zdravie"];
 const GROUP_KEYS = ["vonku", "izby", "voda", "tuv", "kompresor", "energia", "ucinnost", "kvalita"];
 const grpName = g => GROUP_KEYS.includes(g) ? t("stats.skupina." + g) : g;
 /* názvy z číselníkov: známy kľúč sa prekladá, neznámy (z API) ostáva ako je */
@@ -137,9 +136,7 @@ function loadState() {
 
 /* ---------- dáta ---------- */
 const D = {meta: null, metrics: null, day: null, cmp: null, quick: null, quickBase: null, rng: null, rngPrev: null, rngPrevErr: false, flt: null, zdr: null, codes: null, at: {}, key: {}};
-const seq = {den: 0, porovnanie: 0, obdobie: 0, poruchy: 0, zdravie: 0, quick: 0, meta: 0};
-const D = {meta: null, metrics: null, day: null, cmp: null, quick: null, quickBase: null, rng: null, rngPrev: null, rngPrevErr: false, flt: null, codes: null, at: {}, key: {}};
-const seq = {den: 0, porovnanie: 0, obdobie: 0, sezona: 0, poruchy: 0, quick: 0, meta: 0};
+const seq = {den: 0, porovnanie: 0, obdobie: 0, sezona: 0, poruchy: 0, zdravie: 0, quick: 0, meta: 0};
 let built = false, visible = false, root = null, tipEl = null;
 
 async function localApi(path, body) {
@@ -350,8 +347,7 @@ function exportUrl() {
 function updateExport() {
   const a = gid("st-export"); if (!a) return;
   const u = exportUrl();
-  a.hidden = S.view === "poruchy" || S.view === "zdravie";
-  a.hidden = S.view === "poruchy" || S.view === "sezona";
+  a.hidden = S.view === "poruchy" || S.view === "zdravie" || S.view === "sezona";
   if (u) { a.href = u; a.removeAttribute("aria-disabled"); a.title = t("stats.export.stiahnut"); } else { a.removeAttribute("href"); a.setAttribute("aria-disabled", "true"); a.title = t("stats.export.najprv_obdobie"); }
 }
 
@@ -1086,6 +1082,7 @@ function build() {
     <div class="st-msg" id="st-zd-msg" role="status"></div>
     <div id="st-zd-body"></div>
   </section>
+</div>
 <div class="st-view" id="st-v-sezona" hidden>
   <section class="panel pad">
     <div class="st-sub"><h2>${t("stats.sezona.titul")}</h2><span class="sub" id="st-sez-info"></span></div>

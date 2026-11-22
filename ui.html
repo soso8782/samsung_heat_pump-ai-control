@@ -2663,8 +2663,7 @@ async function loadStatus() {
   const cnt = nLlm != null || nRut != null ? t("agent.dnes_modelrutina", {a: nLlm ?? 0, b: nRut ?? 0}) : t("agent.dnes_n", {n: s.runs_today});
   $("#agentinfo").textContent = `${String(s.model || "").split("/").pop()} · ${cnt} · ${t("agent.centa", {v: ((s.cost_today || 0) * 100).toFixed(2).replace(".", DECIMAL)})}`;
   if (!document.querySelector("#last .undoask")) $("#last").innerHTML = s.last_run ? runHtml(s.last_run, false, true) : `<div class="empty">${t("agent.zatial_nebezal")}</div>`;
-  renderSettingsStatus(s); renderVerzia(s);
-  renderSettingsStatus(s); renderUtlm(s);
+  renderSettingsStatus(s); renderVerzia(s); renderUtlm(s);
   abPill(s.abtest);
   renderSeason(s); renderHa(s.ha); renderHaInt(s.ha_api); renderMcp(s.mcp); renderTunnel(s.tunnel); renderBadges(s);
   const bal = s.balance, cr = $("#credit");
