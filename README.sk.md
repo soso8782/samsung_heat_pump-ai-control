@@ -3,6 +3,7 @@
 # Samsung Heat Pump AI Control – inteligentné riadenie tepelného čerpadla Samsung EHS
 
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md) [![Slovenčina](https://img.shields.io/badge/jazyk-Sloven%C4%8Dina-green.svg)](README.sk.md)
+[![Testy](https://github.com/soso8782/samsung_heat_pump-ai-control/actions/workflows/testy.yml/badge.svg)](https://github.com/soso8782/samsung_heat_pump-ai-control/actions/workflows/testy.yml)
 
 [![Podporiť cez PayPal](https://img.shields.io/badge/Podpori%C5%A5-PayPal-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/sonics007) [![Podporiť cez Ko-fi](https://img.shields.io/badge/Ko--fi-Podpori%C5%A5-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/soso8782)
 Ak ti projekt šetrí peniaze alebo čas, môžeš ma podporiť kávou cez PayPal alebo Ko-fi. Ďakujem! ☕
