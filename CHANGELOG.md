@@ -2,6 +2,27 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.13.0] – 2026-11-22
+
+### Pridané
+- **Porovnanie riadiacich čidiel** (`porovnanie.py`, `GET /api/riadiaca/porovnanie?days=N`, tabuľka v karte Izby):
+  pre každú možnosť „Riadiaca izba“ hodiny, rozptyl teplôt izieb, odchýlka riadiacej izby od cieľa, štarty kompresora
+  a krátke cykly, kWh/deň, COP a vonkajšia teplota; upozornenie pri málo dátach (< 48 h) a rozdielnych podmienkach.
+  Agent dostane jednoriadkový súhrn, keď sú aspoň dve možnosti s ≥ 48 h.
+- **Týždenný súhrn kúrenia** (pondelok 8:00, `SUHRN`, `SUHRN_DEN`, `SUHRN_HODINA`): teploty a rozptyl izieb, vonku,
+  spotreba a cena, COP, štarty, TÚV, zásahy agenta, prepnutia riadiacej izby, otvorené upozornenia + krátke odporúčanie
+  modelu (ak je nastavený). Posiela sa správcom, ukladá do `reports` (sekcia Týždenný súhrn), `GET /api/suhrn?tyzden=`.
+- **CI na GitHube** (`.github/workflows/testy.yml`): testy Pythonu 3.11/3.13 a kontrola syntaxe JavaScriptu.
+- **ESPHome: základ + lokálny obal.** `esphome/m5stack-tc.yaml` má všetky entity Home Assistant a IP v `substitutions`;
+  vlastné hodnoty patria do lokálneho obalu (`m5stack-tc.local.example.yaml`), základ sa pri aktualizácii len nahradí.
+
+### Zmenené
+- Monitor: riadok „riadiace čidlo“ dopĺňa hodinové dáta z HA entity ESP (sleduje zvolené čidlo, nie vždy ESPresense).
+- `riadiaca_prepnutia` je definovaná len v `agent.py` (app/porovnanie na ňu odkazujú).
+
+### Opravené
+- `test_en_kompletne.py` nezávisí od dnešného dátumu.
+
 ## [2.12.0] – 2026-11-22
 
 ### Pridané

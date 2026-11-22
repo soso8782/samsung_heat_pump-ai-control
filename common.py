@@ -123,7 +123,8 @@ def adb(cfg):
     """)
     # rozšírenie staršej schémy (ALTER ... ADD COLUMN len ak stĺpec chýba)
     for tb, col, ddl in (("actions", "undone", "INTEGER DEFAULT 0"), ("sessions", "role", "TEXT"), ("sessions", "email", "TEXT"),
-                         ("messages", "author", "TEXT")):
+                         ("messages", "author", "TEXT"),
+                         ("reports", "kind", "TEXT"), ("reports", "data", "TEXT")):
         if col not in [r[1] for r in c.execute("PRAGMA table_info(%s)" % tb)]:
             try:
                 c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (tb, col, ddl))

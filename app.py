@@ -1937,10 +1937,20 @@ class H(BaseHTTPRequestHandler):
                     lim = 8
                 c = adb(cfg)
                 try:
-                    rows = c.execute("SELECT id, ts, week_from, week_to, text, cost FROM reports ORDER BY ts DESC LIMIT ?", (lim,)).fetchall()
+                    rows = c.execute("SELECT id, ts, week_from, week_to, text, cost, kind FROM reports ORDER BY ts DESC LIMIT ?", (lim,)).fetchall()
                 finally:
                     c.close()
-                return self.send(200, {"items": [dict(zip(("id", "ts", "week_from", "week_to", "text", "cost"), r)) for r in rows]})
+                return self.send(200, {"items": [dict(zip(("id", "ts", "week_from", "week_to", "text", "cost", "kind"), r)) for r in rows]})
+            if u.path == "/api/suhrn":
+                c = adb(cfg)
+                try:
+                    try:
+                        s = _agent_mod.suhrn_get(c, (p.get("tyzden", [""])[0] or "").strip() or None)
+                    except ValueError:
+                        return self.send(400, {"error": tr("srv.app.suhrn_tyzden", lang)})
+                finally:
+                    c.close()
+                return self.send(200, s) if s else self.send(404, {"error": tr("srv.app.suhrn_nie", lang)})
             if u.path.startswith("/api/stats/"):
                 return self.stats_get(cfg, u.path[len("/api/stats/"):], p)
             self.send(404, {"error": "not found"})

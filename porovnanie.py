@@ -17,41 +17,9 @@ CACHE_S = 600
 _cache = {}
 
 
-RIADIACA_MATCH_S = 180   # zmena selectu v ESP ±3 min od zápisu z webu = tá istá zmena
-
-
-def riadiaca_prepnutia(cfg, c, a, b):
-    """Prepnutia selectu „Riadiaca izba“ v [a, b): {zaciatok: možnosť platná na začiatku alebo None,
-    zmeny: [{ts, stary, novy, kluc, cidlo, kto, zdroj}]}. Základ sú zmeny stavu selectu zo zberača (tabuľka events: zachytí aj zmeny
-    priamo v ESP/HA); zápisy z webu (tabuľka riadiaca_log) k nim pridávajú `kto` a sú s nimi zlúčené (rovnaká nová možnosť ±3 min,
-    zdroj „web“); web zápis bez zmeny v zberači (zberač nebežal) sa pridá sám. Pri chybe DB prázdny výsledok."""
-    try:
-        ev = tcq(cfg, "SELECT ts, old, new FROM events WHERE entity=? AND old IS NOT NULL AND new IS NOT NULL AND ts>=? AND ts<? ORDER BY ts",
-                 (_agent.RIADIACA_ENT, a, b))
-        prev = tcq(cfg, "SELECT new FROM events WHERE entity=? AND new IS NOT NULL AND ts<? ORDER BY ts DESC LIMIT 1", (_agent.RIADIACA_ENT, a))
-    except Exception:
-        ev, prev = [], []
-    try:
-        web = c.execute("SELECT ts, stary, novy, kluc, kto FROM riadiaca_log WHERE ts>=? AND ts<? ORDER BY ts", (a - RIADIACA_MATCH_S, b)).fetchall()
-    except sqlite3.Error:
-        web = []
-    web = [list(w) + [False] for w in web]
-    out = []
-    for t, o, n in ev:
-        w = next((x for x in web if not x[5] and x[2] == n and abs(x[0] - t) <= RIADIACA_MATCH_S), None)
-        if w:
-            w[5] = True
-        out.append({"ts": t, "stary": o, "novy": n, "kto": w[4] if w else None, "zdroj": "web" if w else "esp"})
-    for t, o, n, k, who, used in web:
-        if not used and a <= t < b:
-            out.append({"ts": t, "stary": o, "novy": n, "kto": who, "zdroj": "web"})
-    out.sort(key=lambda x: x["ts"])
-    izby = profil.load()["izby"]
-    for x in out:
-        m = _agent.riadiaca_mapa([x["novy"]], izby)
-        x["kluc"], x["cidlo"] = (m[0]["kluc"], m[0]["cidlo"]) if m else (None, "")
-    zac = prev[0][0] if prev else (out[0]["stary"] if out else None)
-    return {"zaciatok": zac, "zmeny": out}
+# jediná definícia je v agent.py (používa ju aj týždenný súhrn); tu len odkaz kvôli spätnej kompatibilite
+RIADIACA_MATCH_S = _agent.RIADIACA_MATCH_S
+riadiaca_prepnutia = _agent.riadiaca_prepnutia
 
 
 def split_periods(zac, zmeny, a, b, min_h=MIN_PERIOD_H):
