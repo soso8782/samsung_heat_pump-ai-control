@@ -3,7 +3,7 @@
 # Heslá a kľúče sú v secrets.yaml (!secret), entity Home Assistant (izbové senzory) si prepíšte na svoje.
 
 substitutions:
-  # verzia firmvéru: web ju porovná s major.minor súboru VERSION; pri zmene konfigurácie, ktorú web potrebuje, ju zvýš
+  # verzia firmvéru: web ju porovná s FW_MIN v app.py; pri zmene konfigurácie, ktorú web potrebuje, ju zvýš
   fw_verzia: "2.12.0"
 
 esphome:
