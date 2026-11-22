@@ -81,3 +81,5 @@ does not find them in the ESP list).
 Room temperatures (the `esp` field of the rooms in the profile) can come from any source the ESP exposes (Zigbee, BLE, entities
 from Home Assistant via `platform: homeassistant`). Alternative: leave `esp` empty in the profile and use only HA sensors
 (the `ha` field) – the room then has no live value from the ESP, but the history and statistics from HA work.
+
+**Reference room.** The “Riadiaca izba” select in `m5stack-tc.yaml` decides which sensor the room control follows; the web switches it when an admin clicks a room in the Rooms card. The app pairs an option with a room by name – “<room name>” or “<room name> (<sensor>)” when the room has several sensors. When adding a room/sensor, add the option to the select and a branch to the `riadiaca_nastav` script (same order), and give the sensor an `id` and `on_value` like the others.

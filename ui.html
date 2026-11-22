@@ -514,6 +514,12 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
 .room .rt.na{font:400 13px var(--f-body);color:var(--mut)}
 .room .rd{font-size:12.5px;color:var(--mut);white-space:nowrap;min-width:64px;text-align:right}
 .room svg{width:14px;height:14px;flex:none}
+.room.click{cursor:pointer;transition:border-color .15s,background .15s}
+.room.click:hover{border-color:var(--copper-2);background:var(--raise)}
+.room.click:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+.room.sel:not(.main){border-color:var(--copper-2)}
+.riadsel{margin-top:12px;padding:12px 14px;border:1px solid var(--copper-2);border-radius:14px;background:var(--panel-2)}
+.riadsel .sub{margin:8px 0 0}
 .rtgt{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .rtgt .tv2{font:400 20px var(--f-display);font-variant-numeric:tabular-nums;min-width:70px;text-align:center}
 .rtgt .stp{display:inline-flex;align-items:center;gap:8px}
@@ -697,6 +703,7 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
   <section class="panel pad" id="roomspanel">
     <div class="head"><h2 data-i18n="nav.izby">Izby</h2><span class="sub" id="roomsub" data-i18n="prehlad.izby_sub">Aktuálna teplota a rozdiel oproti cieľu</span></div>
     <div class="rooms" id="rooms" aria-live="polite"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
+    <div id="riadsel"></div>
     <div id="roomtarget"></div>
     <div class="sub usr" id="userlast" style="margin-top:14px" hidden></div>
   </section>
@@ -2052,14 +2059,60 @@ const WIN_SVG = `<svg viewBox="0 0 14 14" aria-hidden="true"><rect class="winico
 function renderRooms(s) {
   const box = $("#rooms"); if (!box) return;
   const c = s.current || {}, wopen = new Set((s.windows_open || []).map(o => o && o.room).filter(Boolean)), ciel = c[RT_KEY];
+  const pick = riadOn(s);
   box.innerHTML = ROOMS.map(([n, l], i) => {
     const v = c[n], key = RKEYS[i], main = i === 0, win = wopen.has(key);
     const diff = v != null && ciel != null ? (Math.abs(v - ciel) < .05 ? t("prehlad.na_cieli") : (v > ciel ? "+" : "−") + f(Math.abs(v - ciel)) + " °C") : "";
-    return `<div class="room${main ? " main" : ""}"><span class="rn">${esc(l)}${main ? "<small>" + t("prehlad.riadiaca") + "</small>" : ""}</span>` +
+    const att = pick ? ` click${riad.open === key ? " sel" : ""}" role="button" tabindex="0" data-rk="${esc(key)}" aria-expanded="${riad.open === key}" title="${esc(t("prehlad.riad_klik"))}` : "";
+    return `<div class="room${main ? " main" : ""}${att}"><span class="rn">${esc(l)}${main ? "<small>" + t("prehlad.riadiaca") + "</small>" : ""}</span>` +
       (win ? `<span title="${esc(t("prehlad.otvorene_okno"))}" aria-label="${esc(t("prehlad.otvorene_okno"))}" role="img">${WIN_SVG}</span>` : "") +
       (v != null ? `<span class="rt">${f(v)}<small class="mut" style="font-size:.6em"> °C</small></span><span class="rd" title="${esc(t("prehlad.rozdiel_cielu"))}">${diff}</span>` : `<span class="rt na">${t("spolocne.bez_udaja")}</span><span class="rd"></span>`) + `</div>`; }).join("");
+  renderRiad(s);
   renderRoomTarget(s);
 }
+/* správca: klik na izbu = výber riadiacej izby (select „Riadiaca izba“ v ESP); izba s viacerými čidlami ponúkne výber čidla.
+   Zmena izby prepne referenčnú izbu v profile a reštartuje služby; zmena čidla v tej istej izbe nie. */
+const riad = {open: null, busy: false, msg: null};
+const riadOn = s => !isUser() && !!(s && s.riadiaca && (s.riadiaca.moznosti || []).length);
+const riadOpts = (s, key) => ((s && s.riadiaca && s.riadiaca.moznosti) || []).filter(o => o.kluc === key);
+let riadHtml = "";
+function renderRiad(s) {
+  const box = $("#riadsel"); if (!box) return;
+  let html = "";
+  if (riad.open && riadOn(s) && RN[riad.open] != null) {
+    const key = riad.open, opts = riadOpts(s, key), cur = s.riadiaca.stav, main = key === RKEYS[0];
+    const msg = riad.msg ? `<span class="sub" role="status" style="margin:0;color:${riad.msg.ok ? "var(--good-ink)" : "var(--crit-ink)"}">${esc(riad.msg.t)}</span>` : "";
+    html = `<div class="riadsel"><b>${esc(t(opts.length > 1 ? "prehlad.riad_titul_cidlo" : "prehlad.riad_titul", {room: RN[key]}))}</b>` +
+      (opts.length ? `<div class="btnrow">` + opts.map(o => { const on = o.moznost === cur;
+        const lbl = opts.length > 1 ? (o.cidlo || RN[key]) : t(on ? "prehlad.riad_aktivna" : "prehlad.riad_nastavit");
+        return `<button type="button" class="btn sm${on ? " primary" : ""}" data-ro="${esc(o.moznost)}" aria-pressed="${on}"${on || riad.busy ? " disabled" : ""}>${esc(lbl)}${on && opts.length > 1 ? " ✓" : ""}</button>`; }).join("") + `</div>`
+        : `<p class="sub">${esc(t("prehlad.riad_bez_cidla"))}</p>`) +
+      (opts.length ? `<p class="sub">${esc(t(main ? "prehlad.riad_pozn_cidlo" : "prehlad.riad_pozn_izba", {room: RN[key]}))}</p>` : "") +
+      `<div class="btnrow"><button type="button" class="btn sm" data-rx="1"${riad.busy ? " disabled" : ""}>${t("spolocne.zrusit")}</button>${msg}</div></div>`;
+  } else if (riad.msg) {
+    html = `<p class="sub" role="status" style="margin-top:10px;color:${riad.msg.ok ? "var(--good-ink)" : "var(--crit-ink)"}">${esc(riad.msg.t)}</p>`;
+  }
+  if (html === riadHtml) return; riadHtml = html; box.innerHTML = html;
+}
+function riadToggle(key) { riad.open = riad.open === key ? null : key; riad.msg = null; renderRooms(statusData || {}); }
+$("#rooms").addEventListener("click", e => { const r = e.target.closest("[data-rk]"); if (r && !riad.busy) riadToggle(r.dataset.rk); });
+$("#rooms").addEventListener("keydown", e => { const r = e.target.closest("[data-rk]");
+  if (r && (e.key === "Enter" || e.key === " ") && !riad.busy) { e.preventDefault(); riadToggle(r.dataset.rk); } });
+$("#riadsel").addEventListener("click", async e => {
+  if (e.target.closest("[data-rx]")) { riad.open = null; riad.msg = null; return renderRooms(statusData || {}); }
+  const b = e.target.closest("[data-ro]"); if (!b || riad.busy || !riad.open) return;
+  const key = riad.open, other = key !== RKEYS[0];
+  if (other && !window.confirm(t("prehlad.riad_potvrd", {room: RN[key]}))) return;
+  riad.busy = true; riad.msg = {t: t("spolocne.ukladam"), ok: true}; renderRooms(statusData || {});
+  try { const r = await api("api/riadiaca", {moznost: b.dataset.ro});
+    if (r.error) riad.msg = {t: r.error, ok: false};
+    else { riad.open = null;
+      riad.msg = {t: (r.restart ? t("prehlad.riad_zmenena_restart", {room: RN[key]}) : t("prehlad.riad_zmenena", {room: RN[key]})) + (r.note ? " " + r.note : ""), ok: true};
+      if (r.restart) setTimeout(() => location.reload(), 15000);
+      else { try { await loadStatus(); } catch (x) {} setTimeout(() => { riad.msg = null; renderRooms(statusData || {}); }, 8000); } }
+  } catch (err) { if (!err.auth) riad.msg = {t: t("spolocne.server_neodpoveda"), ok: false}; }
+  riad.busy = false; renderRooms(statusData || {});
+});
 /* záložka Izby: len aktuálne teploty; záložka TÚV: teplota bojlera a cieľ */
 /* obsah karty izby (zoznam aj detail): názov, okno, teplota, rozdiel voči cieľu / minimu */
 function roomInfo(s, i) {

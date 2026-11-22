@@ -211,6 +211,7 @@ def status(cfg, role="admin", email=None, lang="sk"):
         out["collector_error"] = str(e)
     out["stats"] = stats_brief(cfg, lang)
     out["profil_info"] = profil_info(cfg)
+    out["riadiaca"] = riadiaca_info(cfg)
     out["prevadzka"] = prevadzka(cfg, now)
     try:
         ca = adb(cfg)
@@ -589,6 +590,104 @@ def tuv_boost_post(cfg, body, who, lang="sk"):
         return 200, {"ok": bool(ok), "text": str(text), "tuv": dhw.manual_status(c)}
     finally:
         c.close()
+
+
+# --- Riadiaca izba: select „Riadiaca izba“ v ESP určuje čidlo, podľa ktorého beží izbová regulácia; profil (referenčná izba)
+# sa prispôsobí. Možnosť selectu sa mapuje na izbu podľa názvu: „<názov izby>“ alebo „<názov izby> (<čidlo>)“.
+RIADIACA_ENT = _agent_mod.RIADIACA_ENT
+_riadiaca_cache = {"t": 0.0, "ttl": 0, "v": None}
+
+
+def riadiaca_mapa(options, izby):
+    """[{moznost, kluc, cidlo}] pre možnosti selectu, ktoré patria izbe z profilu (najdlhší zhodný názov vyhráva)."""
+    out = []
+    for o in options:
+        best = None
+        for r in izby:
+            n = r.get("nazov") or ""
+            if n and (o == n or o.startswith(n + " (")) and (best is None or len(n) > len(best["nazov"])):
+                best = r
+        if best:
+            out.append({"moznost": o, "kluc": best["kluc"], "cidlo": o[len(best["nazov"]):].strip().strip("()").strip()})
+    return out
+
+
+def riadiaca_info(cfg, force=False):
+    """Stav selectu „Riadiaca izba“ z ESP ({stav, moznosti}) alebo None (ESP ho nemá / neodpovedá). Výsledok sa drží 30 s (chyba 5 min)."""
+    now = time.time()
+    if not force and now - _riadiaca_cache["t"] < _riadiaca_cache["ttl"]:
+        return _riadiaca_cache["v"]
+    v = None
+    try:
+        url = "%s/select/%s?detail=all" % (cfg["ESP_URL"], urllib.parse.quote(RIADIACA_ENT, safe=""))
+        with urllib.request.urlopen(url, timeout=3) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        opts = [x for x in (d.get("option") or []) if isinstance(x, str)]
+        if opts:
+            stav = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
+            v = {"stav": stav if isinstance(stav, str) else None, "moznosti": riadiaca_mapa(opts, profil.load()["izby"])}
+    except Exception:
+        v = None
+    _riadiaca_cache.update(t=now, ttl=30 if v else 300, v=v)
+    return v
+
+
+def riadiaca_post(cfg, body, who, lang="sk"):
+    """POST /api/riadiaca {moznost} (iba správca): prepne čidlo izbovej regulácie v ESP; ak patrí inej izbe, zmení referenčnú
+    izbu v profile a reštartuje služby. Vracia {ok, moznost, kluc, restart[, note]}."""
+    opt = str(body.get("moznost") or "").strip()
+    info = riadiaca_info(cfg, force=True)
+    if not info:
+        return 502, {"error": tr("srv.app.riadiaca_bez_esp", lang)}
+    m = next((x for x in info["moznosti"] if x["moznost"] == opt), None)
+    if not m:
+        return 400, {"error": tr("srv.app.riadiaca_neplatna", lang)}
+    c = adb(cfg)
+    try:
+        if abtest.active(c):
+            return 409, {"error": tr("srv.app.riadiaca_abtest", lang)}
+        p = profil.load()
+        old_ref = profil.reference_room(p)
+        names = {r["kluc"]: r["nazov"] for r in p["izby"]}
+        if is_dry(cfg):
+            return 200, {"ok": True, "moznost": opt, "kluc": m["kluc"], "restart": False, "note": tr("srv.app.dry_hodnota", lang)}
+        try:
+            _agent_mod.esp_set_select(cfg, RIADIACA_ENT, opt)
+            time.sleep(2)
+            back = riadiaca_info(cfg, force=True)
+        except Exception as e:
+            return 502, {"error": tr("srv.app.riadiaca_zapis", lang, err=e)}
+        if not back or back.get("stav") != opt:
+            return 502, {"error": tr("srv.app.riadiaca_nepotvrdene", lang)}
+        restart = m["kluc"] != old_ref
+        if restart:
+            for r in p["izby"]:
+                if r["kluc"] == m["kluc"]:
+                    r["referencna"], r["min"] = True, None
+                elif r.get("referencna"):
+                    r["referencna"] = False
+                    if r.get("min") is None:
+                        r["min"] = 21.0
+            try:
+                errs = profil.save(p, lang=lang)
+            except OSError as e:
+                errs = [str(e)]
+            if errs:
+                return 500, {"error": tr("srv.app.riadiaca_profil", lang, err="; ".join(errs))}
+        hl = i18n.home_lang(cfg)
+        c.execute("INSERT INTO runs(ts,mode,status,stav,summary,actions) VALUES(?,?,?,?,?,?)",
+                  (int(time.time()), get_state(c, "mode", "advise"), "info", None,
+                   tr("srv.app.riadiaca_log", hl, who=who, old=names.get(old_ref, old_ref), new=opt), "[]"))
+        c.commit()
+    finally:
+        c.close()
+    out = {"ok": True, "moznost": opt, "kluc": m["kluc"], "restart": restart}
+    if restart:
+        rs = restart_services(cfg, lang)
+        if not rs.get("ok"):
+            out["restart"] = False
+            out["note"] = tr("srv.app.riadiaca_restart_rucne", lang, dovod=rs.get("dovod") or "")
+    return 200, out
 
 
 def tuv_target_post(cfg, body, who, lang="sk"):
@@ -1946,6 +2045,9 @@ class H(BaseHTTPRequestHandler):
                 return self.send(code, out)
             if u.path == "/api/room_target":
                 code, out = room_target_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
+                return self.send(code, out)
+            if u.path == "/api/riadiaca":
+                code, out = riadiaca_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)
                 return self.send(code, out)
             if u.path == "/api/tuv_boost":
                 code, out = tuv_boost_post(cfg, body, email or tr("srv.notify.spravca", lang), lang)

@@ -5,6 +5,10 @@
 esphome:
   name: m5stack-tc
   friendly_name: m5stack-tc
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: riadiaca_nastav
 
 esp32:
   board: m5stack-atom
@@ -129,11 +133,17 @@ globals:
     restore_value: false
     initial_value: '0'
 
-  # čas poslednej aktualizácie izbovej teploty (ms od štartu); 0 = ešte neprišla
-  - id: detska_posledna_aktualizacia
+  # čas poslednej aktualizácie teploty riadiacej izby (ms od štartu); 0 = ešte neprišla
+  - id: riadiaca_posledna_aktualizacia
     type: uint32_t
     restore_value: false
     initial_value: '0'
+
+  # senzor, podľa ktorého beží izbová regulácia (nastavuje ho select „Riadiaca izba“ cez skript riadiaca_nastav)
+  - id: riadiaca_zdroj
+    type: esphome::sensor::Sensor*
+    restore_value: false
+    initial_value: 'nullptr'
  
 #########################################################################
 # ČASOVÁ LOGIKA (TARIFY + BEZPEČNÁ KONTROLA TEPLOTY V IZBE)
@@ -216,7 +226,7 @@ interval:
               // Ak kúrenie pred tarifou vypla regulácia, kurenie_bolo_zapnute = false,
               // takže ho tarifa na konci nezapne a riadenie prevezme znova regulácia.
 
-              // --- 2. IZBOVÁ REGULÁCIA (Detská izba) ---
+              // --- 2. IZBOVÁ REGULÁCIA (riadiaca izba podľa selectu „Riadiaca izba“) ---
               // Režimy: 0 = Vypnutá (izba sa ignoruje), 1 = Posun krivky, 2 = Vypínanie kúrenia
               auto rezim_opt = id(izba_rezim).active_index();
               size_t rezim = rezim_opt.has_value() ? *rezim_opt : 0;
@@ -269,10 +279,11 @@ interval:
               // Výpadok = HA odpojený, entita unavailable/unknown (NaN), alebo
               // 12 h bez jedinej zmeny (posledná záchrana, ak HA drží starú hodnotu).
               const uint32_t MAX_VEK_MS = 12UL * 60UL * 60UL * 1000UL;   // 12 hodín
-              float detska = id(detska_teplota).state;
-              bool cerstva = !isnan(detska) && api::global_api_server->is_connected() &&
-                             id(detska_posledna_aktualizacia) != 0 &&
-                             (millis() - id(detska_posledna_aktualizacia)) < MAX_VEK_MS;
+              auto *zdroj = id(riadiaca_zdroj);
+              float izba_t = zdroj != nullptr ? zdroj->state : NAN;
+              bool cerstva = !isnan(izba_t) && api::global_api_server->is_connected() &&
+                             id(riadiaca_posledna_aktualizacia) != 0 &&
+                             (millis() - id(riadiaca_posledna_aktualizacia)) < MAX_VEK_MS;
 
               // Poistka reaguje až na výpadok dlhší ako 5 min (aj po štarte ESP),
               // krátke výpadky senzora/HA nemenia nič - posun sa len drží.
@@ -320,7 +331,7 @@ interval:
                   id(posun_i) = 0.0f;
                   sprava = "Senzor nedostupný - normálna krivka (poistka)";
                 } else {
-                  float p = detska > ciel ? -id(posun_zosilnenie).state * (detska - ciel) : 0.0f;
+                  float p = izba_t > ciel ? -id(posun_zosilnenie).state * (izba_t - ciel) : 0.0f;
                   // prvý beh: doťahovanie nadviaže na aktuálny posun (bez skoku)
                   if (isnan(id(posun_i)))
                     id(posun_i) = isnan(aktualny) ? 0.0f : std::min(max_plus, std::max(max_posun, aktualny - p));
@@ -334,31 +345,31 @@ interval:
                   bool tuv_ide = id(ventil_3c).state.find("DHW") != std::string::npos;
                   bool kuri = kurenie_on && !id(bolo_vypnute_blokovanim) && !tuv_ide &&
                               !(!isnan(vonku) && !isnan(leto) && vonku > leto);
-                  if (detska <= zapnutie && id(posun_i) < 0.0f) id(posun_i) = 0.0f;   // chladno: hneď
+                  if (izba_t <= zapnutie && id(posun_i) < 0.0f) id(posun_i) = 0.0f;   // chladno: hneď
                   if (id(posun_i_cas) == 0) id(posun_i_cas) = millis();
                   uint32_t od_kroku = millis() - id(posun_i_cas);
-                  bool proti = (detska < ciel && id(posun_i) < 0.0f) || (detska > ciel && id(posun_i) > 0.0f);
+                  bool proti = (izba_t < ciel && id(posun_i) < 0.0f) || (izba_t > ciel && id(posun_i) > 0.0f);
                   if (proti && od_kroku >= RYCHLO_MS) {
                     id(posun_i_cas) = millis();
                     float pred = id(posun_i);
                     id(posun_i) = pred < 0.0f ? std::min(0.0f, pred + 1.0f) : std::max(0.0f, pred - 1.0f);
-                    ESP_LOGI("izba", "Detská %.1f °C na opačnej strane cieľa - doťahovanie %.1f -> %.1f", detska, pred, id(posun_i));
+                    ESP_LOGI("izba", "Riadiaca izba %.1f °C na opačnej strane cieľa - doťahovanie %.1f -> %.1f", izba_t, pred, id(posun_i));
                   } else if (!proti && od_kroku >= KROK_MS) {
                     id(posun_i_cas) = millis();
                     // Pomalé doťahovanie OD nuly len keď TČ skutočne kúri - inak by sa počas
                     // tarify, ohrevu TÚV, vypnutého kúrenia alebo letného vypnutia (FSV 4013)
                     // zbytočne nabalilo (izba chladne, lebo sa nekúri, nie pre slabú krivku).
                     if (kuri) {
-                      if (detska > ciel + 0.2f) id(posun_i) -= 0.5f;
-                      else if (detska < ciel - 0.2f) id(posun_i) += 0.5f;
+                      if (izba_t > ciel + 0.2f) id(posun_i) -= 0.5f;
+                      else if (izba_t < ciel - 0.2f) id(posun_i) += 0.5f;
                     }
                   }
                   id(posun_i) = std::min(max_plus, std::max(max_posun, id(posun_i)));
                   float spolu = roundf((p + id(posun_i)) * 2.0f) / 2.0f;
                   novy = std::min(max_plus, std::max(max_posun, spolu));
-                  const char *kde = detska > ciel + 0.2f ? "Nad cieľom" : (detska < ciel - 0.2f ? "Pod cieľom" : "Na cieli");
+                  const char *kde = izba_t > ciel + 0.2f ? "Nad cieľom" : (izba_t < ciel - 0.2f ? "Pod cieľom" : "Na cieli");
                   snprintf(buf, sizeof(buf), "%s %.1f °C - posun %.1f (okamžitý %.1f, doťahovanie %.1f%s)",
-                           kde, detska, novy, p, id(posun_i), kuri ? "" : ", pozastavené");
+                           kde, izba_t, novy, p, id(posun_i), kuri ? "" : ", pozastavené");
                   sprava = buf;
                 }
 
@@ -379,28 +390,28 @@ interval:
                       id(regulacia_vypla_kurenie) = false;
                       id(sw_kurenie).turn_on();
                     }
-                  } else if (kurenie_on && na_maxime && detska >= ciel + hyb) {
+                  } else if (kurenie_on && na_maxime && izba_t >= ciel + hyb) {
                     if (od_zmeny_min >= min_chod) {
-                      ESP_LOGI("izba", "Hybrid: posun na maxime, detská %.1f °C - vypínam kúrenie", detska);
+                      ESP_LOGI("izba", "Hybrid: posun na maxime, riadiaca izba %.1f °C - vypínam kúrenie", izba_t);
                       id(regulacia_vypla_kurenie) = true;
                       id(sw_kurenie).turn_off();
-                      snprintf(buf, sizeof(buf), "Hybrid: prehriate %.1f °C - kúrenie vypnuté", detska);
+                      snprintf(buf, sizeof(buf), "Hybrid: prehriate %.1f °C - kúrenie vypnuté", izba_t);
                     } else {
                       snprintf(buf, sizeof(buf), "Hybrid: prehriate %.1f °C - čaká na min. chod %u/%u min",
-                               detska, (unsigned) od_zmeny_min, (unsigned) min_chod);
+                               izba_t, (unsigned) od_zmeny_min, (unsigned) min_chod);
                     }
                     sprava = buf;
                   } else if (!kurenie_on && id(regulacia_vypla_kurenie)) {
-                    if (detska >= ciel) {
-                      snprintf(buf, sizeof(buf), "Hybrid: kúrenie vypnuté (%.1f °C)", detska);
+                    if (izba_t >= ciel) {
+                      snprintf(buf, sizeof(buf), "Hybrid: kúrenie vypnuté (%.1f °C)", izba_t);
                     } else if (od_zmeny_min >= min_pauza) {
-                      ESP_LOGI("izba", "Hybrid: detská %.1f °C pod cieľom - zapínam kúrenie", detska);
+                      ESP_LOGI("izba", "Hybrid: riadiaca izba %.1f °C pod cieľom - zapínam kúrenie", izba_t);
                       id(regulacia_vypla_kurenie) = false;
                       id(sw_kurenie).turn_on();
-                      snprintf(buf, sizeof(buf), "Hybrid: %.1f °C pod cieľom - kúrenie zapnuté", detska);
+                      snprintf(buf, sizeof(buf), "Hybrid: %.1f °C pod cieľom - kúrenie zapnuté", izba_t);
                     } else {
                       snprintf(buf, sizeof(buf), "Hybrid: %.1f °C - čaká na min. pauzu %u/%u min",
-                               detska, (unsigned) od_zmeny_min, (unsigned) min_pauza);
+                               izba_t, (unsigned) od_zmeny_min, (unsigned) min_pauza);
                     }
                     sprava = buf;
                   }
@@ -412,7 +423,7 @@ interval:
                 bool smie = novy == 0.0f || id(posun_posledny_zapis) == 0 ||
                             (millis() - id(posun_posledny_zapis)) >= MIN_ODSTUP_MS;
                 if (zmena && smie) {
-                  ESP_LOGI("izba", "Detská %.1f °C -> posun krivky %.1f -> %.1f °C", detska, aktualny, novy);
+                  ESP_LOGI("izba", "Riadiaca izba %.1f °C -> posun krivky %.1f -> %.1f °C", izba_t, aktualny, novy);
                   // zápis poistky neblokuje návrat regulácie 10-min limitom
                   if (cerstva) id(posun_posledny_zapis) = millis();
                   auto call = id(wl_posun).make_call();
@@ -441,32 +452,32 @@ interval:
               uint32_t min_chod  = (uint32_t) id(min_chod_kurenia).state;
               uint32_t min_pauza = (uint32_t) id(min_pauza_kurenia).state;
 
-              if (kurenie_on && detska >= ciel) {
+              if (kurenie_on && izba_t >= ciel) {
                 if (od_zmeny_min >= min_chod) {
-                  ESP_LOGI("izba", "Detská %.1f °C >= %.1f °C - vypínam kúrenie", detska, ciel);
+                  ESP_LOGI("izba", "Riadiaca izba %.1f °C >= %.1f °C - vypínam kúrenie", izba_t, ciel);
                   id(regulacia_vypla_kurenie) = true;
                   id(sw_kurenie).turn_off();
-                  snprintf(buf, sizeof(buf), "Prehriate %.1f °C - kúrenie vypnuté", detska);
+                  snprintf(buf, sizeof(buf), "Prehriate %.1f °C - kúrenie vypnuté", izba_t);
                 } else {
                   snprintf(buf, sizeof(buf), "Prehriate %.1f °C - čaká na min. chod %u/%u min",
-                           detska, (unsigned) od_zmeny_min, (unsigned) min_chod);
+                           izba_t, (unsigned) od_zmeny_min, (unsigned) min_chod);
                 }
               } else if (!kurenie_on && id(regulacia_vypla_kurenie)) {
-                if (detska > zapnutie) {
-                  snprintf(buf, sizeof(buf), "Kúrenie vypnuté reguláciou (%.1f °C)", detska);
+                if (izba_t > zapnutie) {
+                  snprintf(buf, sizeof(buf), "Kúrenie vypnuté reguláciou (%.1f °C)", izba_t);
                 } else if (od_zmeny_min >= min_pauza) {
-                  ESP_LOGI("izba", "Detská %.1f °C <= %.1f °C - zapínam kúrenie", detska, zapnutie);
+                  ESP_LOGI("izba", "Riadiaca izba %.1f °C <= %.1f °C - zapínam kúrenie", izba_t, zapnutie);
                   id(regulacia_vypla_kurenie) = false;
                   id(sw_kurenie).turn_on();
-                  snprintf(buf, sizeof(buf), "Chladno %.1f °C - kúrenie zapnuté", detska);
+                  snprintf(buf, sizeof(buf), "Chladno %.1f °C - kúrenie zapnuté", izba_t);
                 } else {
                   snprintf(buf, sizeof(buf), "Chladno %.1f °C - čaká na min. pauzu %u/%u min",
-                           detska, (unsigned) od_zmeny_min, (unsigned) min_pauza);
+                           izba_t, (unsigned) od_zmeny_min, (unsigned) min_pauza);
                 }
               } else if (!kurenie_on) {
-                snprintf(buf, sizeof(buf), "Kúrenie vypnuté ručne (%.1f °C)", detska);
+                snprintf(buf, sizeof(buf), "Kúrenie vypnuté ručne (%.1f °C)", izba_t);
               } else {
-                snprintf(buf, sizeof(buf), "Kúrenie beží (%.1f °C)", detska);
+                snprintf(buf, sizeof(buf), "Kúrenie beží (%.1f °C)", izba_t);
               }
               stav(buf);
 
@@ -1050,6 +1061,32 @@ select:
               }
             }
 
+  # Podľa ktorého čidla beží izbová regulácia. Aplikácia mapuje možnosť na izbu podľa názvu:
+  # „<názov izby>“ alebo „<názov izby> (<čidlo>)“ – izba s viacerými čidlami má viac možností.
+  # PORADIE MOŽNOSTÍ zodpovedá skriptu riadiaca_nastav (index), pri zmene upravte oboje.
+  - platform: template
+    name: "Riadiaca izba"
+    id: riadiaca_izba
+    web_server:
+      sorting_group_id: g_izba
+      sorting_weight: 1.5
+    options:
+      - "Detská (ESPresense)"
+      - "Detská (Zigbee)"
+      - "Jedáleň"
+      - "Jedáleň (hlavica)"
+      - "Kuchyňa"
+      - "Obývačka"
+      - "Spálňa"
+      - "Pracovňa"
+      - "Kúpeľňa"
+    initial_option: "Detská (ESPresense)"
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - script.execute: riadiaca_nastav
+
   - platform: samsung_nasa
     nasa_device_id: indoor_unit
     name: "Režim kúrenia"
@@ -1074,6 +1111,34 @@ select:
       sorting_weight: 6
     message: 0x406F
  
+script:
+  # Nastaví zdroj teploty riadiacej izby podľa selectu „Riadiaca izba“ (pri štarte aj pri zmene).
+  - id: riadiaca_nastav
+    mode: restart
+    then:
+      - lambda: |-
+          auto idx = id(riadiaca_izba).active_index();
+          esphome::sensor::Sensor *s = id(detska_teplota);
+          if (idx.has_value()) {
+            switch (*idx) {
+              case 1: s = id(izba_detska_zigbee); break;
+              case 2: s = id(izba_jedalen); break;
+              case 3: s = id(izba_jedalen_hlavica); break;
+              case 4: s = id(izba_kuchyna); break;
+              case 5: s = id(izba_obyvacka); break;
+              case 6: s = id(izba_spalna); break;
+              case 7: s = id(izba_pracovna); break;
+              case 8: s = id(izba_kupelna); break;
+              default: break;
+            }
+          }
+          bool zmena = id(riadiaca_zdroj) != s;
+          id(riadiaca_zdroj) = s;
+          // HA posiela hodnotu len pri zmene: posledná známa hodnota nového zdroja platí ako čerstvá
+          if (zmena) id(riadiaca_posledna_aktualizacia) = (s->has_state() && !isnan(s->state)) ? millis() : 0;
+          id(sledovana_teplota_web).publish_state(s->has_state() ? s->state : NAN);
+          ESP_LOGI("izba", "Riadiaca izba: možnosť %d", idx.has_value() ? (int) *idx : -1);
+
 #########################################################################
 # TEXTOVÉ SENZORY (Stav 3-cestného ventilu)
 #########################################################################
@@ -1165,67 +1230,108 @@ sensor:
     on_value:
       then:
         - lambda: |-
-            if (!isnan(x)) id(detska_posledna_aktualizacia) = millis();
+            if (!isnan(x) && id(riadiaca_zdroj) == id(detska_teplota)) id(riadiaca_posledna_aktualizacia) = millis();
 
-  # --- Teploty izieb z HA - iba na sledovanie (monitoring), regulácia ich nepoužíva ---
+  # --- Teploty izieb z HA - na sledovanie; regulácia použije tú, ktorú vyberie select „Riadiaca izba“ ---
   - platform: homeassistant
+    id: izba_jedalen
     name: "Izba Jedáleň"
     entity_id: sensor.0x00124b0029114db8_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 1}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_jedalen)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_jedalen_hlavica
     name: "Radiátor Jedáleň (hlavica)"
     entity_id: sensor.jedalen_radiator_local_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 2}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_jedalen_hlavica)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_obyvacka
     name: "Izba Obývačka"
     entity_id: sensor.obyvacka_t_h_cidlo_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 3}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_obyvacka)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_detska_zigbee
     name: "Izba Detská (Zigbee)"
     entity_id: sensor.detska_t_h_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 4}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_detska_zigbee)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_kupelna
     name: "Izba Kúpeľňa"
     entity_id: sensor.kupelna_t_h_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 5}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_kupelna)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_spalna
     name: "Izba Spálňa"
     entity_id: sensor.spalna_t_h_cidlo_2_kruhovy_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 6}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_spalna)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_pracovna
     name: "Izba Pracovňa"
     entity_id: sensor.pracovna_t_h_cidlo_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 7}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_pracovna)) id(riadiaca_posledna_aktualizacia) = millis();
   - platform: homeassistant
+    id: izba_kuchyna
     name: "Izba Kuchyňa"
     entity_id: sensor.t_h_kuchyna_temperature
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
     web_server: {sorting_group_id: g_izby, sorting_weight: 8}
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && id(riadiaca_zdroj) == id(izba_kuchyna)) id(riadiaca_posledna_aktualizacia) = millis();
  
-  # Šablónový senzor pre webserver ESP32 a Home Assistant
+  # Šablónový senzor pre webserver ESP32 a Home Assistant: teplota riadiacej izby (zdroj podľa selectu „Riadiaca izba“).
+  # Názov entity ostáva kvôli histórii a profilu aplikácie, aj keď je riadiaca iná izba.
   - platform: template
     name: "Sledovaná teplota (Detská izba)"
     web_server:
@@ -1238,7 +1344,8 @@ sensor:
     accuracy_decimals: 1
     update_interval: 10s
     lambda: |-
-      return id(detska_teplota).state;
+      auto *zdroj = id(riadiaca_zdroj);
+      return zdroj != nullptr ? zdroj->state : NAN;
  
   # Aktuálne platná cieľová teplota izby (podľa časového plánu alebo pevná)
   - platform: template

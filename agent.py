@@ -862,12 +862,14 @@ def esp_set_number(cfg, name, value):
 
 SELECT_ENT = "Režim izbovej regulácie"
 SELECT_OPTIONS = ("Vypnutá", "Posun krivky")   # „Vypínanie kúrenia“ sa nikdy nepoužije
+RIADIACA_ENT = "Riadiaca izba"   # select v ESP: čidlo, podľa ktorého beží izbová regulácia (mení ho len správca cez web)
 
 
 def esp_set_select(cfg, name, option):
-    """Jediný zápis do selectu ESP (porovnávací test A/B). Povolené LEN „Režim izbovej regulácie“ = „Vypnutá“ / „Posun krivky“,
-    inak ValueError. Pri DRY_RUN nič neodošle, len zaloguje (rovnako ako esp_set_number)."""
-    if name != SELECT_ENT or option not in SELECT_OPTIONS:
+    """Jediný zápis do selectu ESP. Povolené LEN „Režim izbovej regulácie“ = „Vypnutá“ / „Posun krivky“ (porovnávací test A/B)
+    a „Riadiaca izba“ (voľbu overí volajúci voči možnostiam z ESP), inak ValueError. Pri DRY_RUN nič neodošle, len zaloguje."""
+    ok = (name == SELECT_ENT and option in SELECT_OPTIONS) or (name == RIADIACA_ENT and isinstance(option, str) and 0 < len(option) <= 64)
+    if not ok:
         raise ValueError(tr("srv.run.select_not_allowed", i18n.home_lang(cfg), name=name, opt=option))
     if is_dry(cfg):
         print("[DRY_RUN] zápis do ESP preskočený: select %s = %s" % (name, option), flush=True)

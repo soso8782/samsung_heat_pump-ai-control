@@ -167,6 +167,60 @@ class Api(Tmp):
         self.assertTrue(all(k in app.S for k in app.ROOM_KEYS))
 
 
+class Riadiaca(Tmp):
+    """Výber riadiacej izby: select „Riadiaca izba“ v ESP + prepnutie referenčnej izby v profile (ESP aj reštart sú mockované)."""
+    OPTS = ["Salón (ESPresense)", "Salón (Zigbee)", "Kuchyňa", "Spálňa", "Pivnica"]
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(profil.save(custom_profile()), [])
+        self.state = {"v": self.OPTS[0]}
+        app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+        self.cfg["DRY_RUN"] = "0"
+        mapa = lambda: app.riadiaca_mapa(self.OPTS, profil.load()["izby"])
+        self.p1 = mock.patch.object(app, "riadiaca_info", side_effect=lambda cfg, force=False: {"stav": self.state["v"], "moznosti": mapa()})
+        self.p2 = mock.patch.object(app._agent_mod, "esp_set_select", side_effect=lambda cfg, n, o: self.state.update(v=o))
+        self.p3 = mock.patch.object(app, "restart_services", return_value={"ok": True})
+        self.p4 = mock.patch.object(app.time, "sleep")
+        for x in (self.p1, self.p2, self.p3, self.p4):
+            x.start()
+
+    def tearDown(self):
+        for x in (self.p1, self.p2, self.p3, self.p4):
+            x.stop()
+        super().tearDown()
+
+    def test_mapa(self):
+        m = app.riadiaca_mapa(self.OPTS, profil.load()["izby"])
+        self.assertEqual([(x["kluc"], x["cidlo"]) for x in m],
+                         [("salon", "ESPresense"), ("salon", "Zigbee"), ("kuchyna", ""), ("spalna", "")])   # „Pivnica“ nemá izbu
+
+    def test_ina_izba_prepne_profil_a_restartuje(self):
+        code, out = app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "admin@x")
+        self.assertEqual(code, 200, out); self.assertTrue(out["restart"]); self.assertEqual(out["kluc"], "spalna")
+        p = profil.load()
+        self.assertEqual(profil.reference_room(p), "spalna")
+        r = {x["kluc"]: x for x in p["izby"]}
+        self.assertIsNone(r["spalna"]["min"]); self.assertFalse(r["salon"]["referencna"]); self.assertEqual(r["salon"]["min"], 21.0)
+        app.restart_services.assert_called_once()
+
+    def test_cidlo_tej_istej_izby_bez_restartu(self):
+        code, out = app.riadiaca_post(self.cfg, {"moznost": "Salón (Zigbee)"}, "admin@x")
+        self.assertEqual(code, 200, out); self.assertFalse(out["restart"])
+        self.assertEqual(profil.reference_room(), "salon"); app.restart_services.assert_not_called()
+
+    def test_neplatna_a_dry(self):
+        self.assertEqual(app.riadiaca_post(self.cfg, {"moznost": "Pivnica"}, "a")[0], 400)
+        code, out = app.riadiaca_post(dict(self.cfg, DRY_RUN="1"), {"moznost": "Spálňa"}, "a")
+        self.assertEqual(code, 200); self.assertIn("note", out)
+        self.assertEqual(profil.reference_room(), "salon"); app._agent_mod.esp_set_select.assert_not_called()
+
+    def test_nepotvrdene(self):
+        app._agent_mod.esp_set_select.side_effect = lambda cfg, n, o: None
+        self.assertEqual(app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "a")[0], 502)
+        self.assertEqual(profil.reference_room(), "salon")
+
+
 class Http(Tmp):
     def setUp(self):
         super().setUp()

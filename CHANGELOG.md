@@ -2,6 +2,19 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.11.0] – 2026-11-22
+
+### Pridané
+- **Výber riadiacej izby kliknutím (správca).** V karte Izby na Prehľade sa kliknutím na izbu otvorí výber: izbu možno
+  nastaviť ako riadiacu a izba s viacerými čidlami (napr. Detská: ESPresense / Zigbee, Jedáleň: izbové čidlo / hlavica)
+  ponúkne výber čidla. Nový select **„Riadiaca izba“** v `esphome/m5stack-tc.yaml` určuje, podľa ktorého čidla beží
+  izbová regulácia v ESP (posun krivky aj vypínanie kúrenia); „Sledovaná teplota (Detská izba)“ teraz ukazuje teplotu
+  zvoleného čidla (názov entity ostáva kvôli histórii). `POST /api/riadiaca {moznost}` zapíše select, overí ho a pri
+  zmene izby prepne referenčnú izbu v profile (doterajšia dostane minimum 21 °C) a reštartuje služby; zmena čidla v tej
+  istej izbe reštart nepotrebuje. Počas testu A/B je zmena zakázaná. `/api/status` (správca) vracia blok `riadiaca`.
+  Možnosť selectu sa páruje s izbou podľa názvu: „<názov izby>“ alebo „<názov izby> (<čidlo>)“. Testy v `test_v2_web.py`.
+  **Vyžaduje nahratie novej konfigurácie do ESP.**
+
 ## [2.10.1] – 2026-11-21
 
 ### Opravené
