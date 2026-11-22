@@ -145,7 +145,8 @@ class Http(unittest.TestCase):
         cls.app = app
         cls.d = tempfile.mkdtemp()
         cfg = {"AGENT_DB": os.path.join(cls.d, "agent.db"), "TC_DB": os.path.join(cls.d, "tc.db"), "STATS_DB": os.path.join(cls.d, "stats.db"),
-               "HA_TOKEN": "", "OPENROUTER_API_KEY": "", "HA_URL": "http://ha.invalid:8123", "ESP_URL": "http://esp.invalid"}
+               "HA_TOKEN": "", "OPENROUTER_API_KEY": "", "HA_URL": "http://ha.invalid:8123", "ESP_URL": "http://esp.invalid",
+               "UPDATE_CHECK": "0"}
         cls._orig = app.load_cfg
         app.load_cfg = lambda: cfg
         c = common.adb(cfg)

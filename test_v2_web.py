@@ -25,7 +25,8 @@ class Tmp(unittest.TestCase):
         self.pf = os.path.join(self.d, "profil.json")
         self._pp = mock.patch.object(profil, "PROFILE_FILE", self.pf); self._pp.start()
         self.cfg = {"AGENT_DB": os.path.join(self.d, "a.db"), "TC_DB": os.path.join(self.d, "tc.db"), "STATS_DB": os.path.join(self.d, "stats.db"),
-                    "HA_TOKEN": "", "OPENROUTER_API_KEY": "", "HA_URL": "http://ha.invalid:8123", "ESP_URL": "http://esp.invalid"}
+                    "HA_TOKEN": "", "OPENROUTER_API_KEY": "", "HA_URL": "http://ha.invalid:8123", "ESP_URL": "http://esp.invalid",
+                    "UPDATE_CHECK": "0"}
         app._spotreba_cache.update(t=0.0, v=False)
 
     def tearDown(self):

@@ -11,7 +11,7 @@ from common import (REF_ROOM, ROOM_NAMES, ROOMS, ROOT, S, TARGET_ROOMS, adb, bal
                     hour_stats, is_dry, load_cfg, local_midnight, save_cfg, set_state, tcq, cfg_int)
 from agent import ALLOWED, ROOM_TARGET_ENT, UNDO_MAX_AGE_S, call_llm, chat_reply, parse_room_target, set_room_target, undo, update_days
 import agent as _agent_mod
-import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, vonku
+import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, verzia, vonku
 try:   # štatistiky (stats.py): ak modul chýba, web ostane funkčný a /api/stats/* vráti 503
     import stats
 except Exception:
@@ -213,6 +213,7 @@ def status(cfg, role="admin", email=None, lang="sk"):
     out["profil_info"] = profil_info(cfg)
     out["riadiaca"] = riadiaca_info(cfg)
     out["firmver"] = firmver_info(cfg, out["riadiaca"])
+    out["verzia"] = verzia.info(cfg, out["firmver"])   # Nastavenia „O aplikácii“: verzia appky, commit, firmvér, novšia verzia
     out["prevadzka"] = prevadzka(cfg, now)
     try:
         ca = adb(cfg)
@@ -260,6 +261,7 @@ def status_user(cfg, role, email, lang="sk"):
         c.close()
     out["profil_info"] = profil_info(cfg)
     out["prevadzka"] = prevadzka(cfg, now)
+    out["verzia"] = {"app": verzia.app_version()}   # rola user vidí len verziu aplikácie (pätička)
     out["current"] = {}
     try:
         meta = dict(tcq(cfg, "SELECT k, v FROM meta"))

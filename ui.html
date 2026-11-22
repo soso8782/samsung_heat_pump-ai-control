@@ -976,6 +976,12 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
 
   <div class="tab" id="tab-nastavenia" role="tabpanel" aria-labelledby="tabl-nastavenia" hidden>
     <div class="sgrid">
+    <section class="panel pad sgroup" id="verziasettings">
+      <h3 data-i18n="nastavenia.verzia_titul">O aplikácii / Verzia</h3>
+      <div id="verziainfo" class="sub" style="display:grid;gap:4px"><span data-i18n="spolocne.nacitavam_m">načítavam…</span></div>
+      <div id="verziawarn" class="callout warn" hidden style="margin-top:8px" role="status"></div>
+    </section>
+
     <section class="panel pad sgroup" id="hasettings">
       <h3>Home Assistant</h3>
       <div class="hastat"><span class="dot" id="hadot2"></span><span id="hastat2" data-i18n="spolocne.nacitavam_m">načítavam…</span></div>
@@ -1254,7 +1260,7 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
     </div>
   </div>
 
-  <footer class="adm"><span data-i18n="spolocne.pata1">Tepelné čerpadlo Samsung EHS 12 kW · dáta zo zberača m5stack-tc</span><span data-i18n="spolocne.pata2">Dostupné len v domácej sieti</span></footer>
+  <footer class="adm"><span data-i18n="spolocne.pata1">Tepelné čerpadlo Samsung EHS 12 kW · dáta zo zberača m5stack-tc</span><span data-i18n="spolocne.pata2">Dostupné len v domácej sieti</span><span class="mut" id="appver"></span></footer>
   <footer class="podpora"><span><span data-i18n="spolocne.podpora">Páči sa ti aplikácia? Podpor projekt:</span> <a href="https://www.paypal.com/paypalme/sonics007" target="_blank" rel="noopener">PayPal</a> · <a href="https://ko-fi.com/soso8782" target="_blank" rel="noopener">Ko-fi</a></span><a href="https://github.com/soso8782/samsung_heat_pump-ai-control" target="_blank" rel="noopener">GitHub</a></footer>
 </main>
 <div id="tip"></div>
@@ -2583,6 +2589,7 @@ async function loadStatus() {
   const s = statusData = s0;
   applyRole(s.role, s.email);
   applyProfil(s.profil_info);
+  if (s.verzia && s.verzia.app) $("#appver").textContent = "v" + s.verzia.app;
   renderBigRooms(s); renderTuv(s);
   if (isUser()) { renderHero(s); renderRooms(s); renderUserLast(s); updateDial(); if (s.first_day) $("#date").min = s.first_day; return; }
   renderAlerts(s.alerts);
@@ -2597,7 +2604,7 @@ async function loadStatus() {
   const cnt = nLlm != null || nRut != null ? t("agent.dnes_modelrutina", {a: nLlm ?? 0, b: nRut ?? 0}) : t("agent.dnes_n", {n: s.runs_today});
   $("#agentinfo").textContent = `${String(s.model || "").split("/").pop()} · ${cnt} · ${t("agent.centa", {v: ((s.cost_today || 0) * 100).toFixed(2).replace(".", DECIMAL)})}`;
   if (!document.querySelector("#last .undoask")) $("#last").innerHTML = s.last_run ? runHtml(s.last_run, false, true) : `<div class="empty">${t("agent.zatial_nebezal")}</div>`;
-  renderSettingsStatus(s);
+  renderSettingsStatus(s); renderVerzia(s);
   abPill(s.abtest);
   renderSeason(s); renderHa(s.ha); renderHaInt(s.ha_api); renderMcp(s.mcp); renderTunnel(s.tunnel); renderBadges(s);
   const bal = s.balance, cr = $("#credit");
@@ -2856,6 +2863,26 @@ $("#setform").onsubmit = guard(async e => { e.preventDefault(); const body = {},
   if (r.error) return setMsg(r.error, false);
   $("#apikey").value = ""; $("#apikey").type = "password"; $("#showkey").textContent = t("spolocne.zobrazit"); window.__modelDirty = 0; window.__ivDirty = 0; window.__fbDirty = 0; window.__gapDirty = 0; window.__ulDirty = 0;
   await new Promise(r => setTimeout(r, 400)); await loadStatus(); modelHint(); setTimeout(() => loadStatus().catch(() => {}), 20000); setMsg(t("nastavenia.ulozene_beh"), true); }, "#setmsg");
+
+/* O aplikácii / Verzia (Nastavenia): api/status.verzia; firmvér ESP proti minimu, novšia verzia z GitHubu */
+function renderVerzia(s) {
+  const v = s.verzia; if (!v) return;
+  const fw = v.firmver || {}, rows = [], warn = [];
+  const row = (k, val) => rows.push(`<div>${k ? `<span class="mut">${esc(t(k))}</span> ` : ""}${val}</div>`);
+  let app = esc(v.app || "–");
+  if (v.commit) app += " · " + esc(t("nastavenia.verzia_commit", {v: v.commit, d: String(v.datum || "").slice(0, 10)}));
+  row("nastavenia.verzia_app", app);
+  if (v.adresar) row("nastavenia.verzia_adresar", `<code>${esc(v.adresar)}</code>`);
+  row("nastavenia.verzia_firmver", fw.verzia ? `${esc(fw.verzia)} <span class="mut">(${esc(t("nastavenia.verzia_fw_min", {v: fw.pozadovana || "–"}))})</span>` : "–");
+  if (fw.stary && fw.verzia) warn.push(t("nastavenia.verzia_fw_stary", {v: fw.pozadovana || ""}));
+  else if (!fw.verzia && !fw.nedostupne) warn.push(t("nastavenia.verzia_fw_nedostupny"));
+  if (v.novsia) row(null, `<b style="color:var(--warn-ink)">${esc(t("nastavenia.verzia_novsia", {v: v.najnovsia}))}</b>`);
+  else if (v.najnovsia) row(null, esc(t("nastavenia.verzia_aktualna")));
+  else if (v.kontrola === false) row(null, esc(t("nastavenia.verzia_kontrola_vypnuta")));
+  else if (v.kontrola) row(null, esc(t("nastavenia.verzia_nezistena")));
+  $("#verziainfo").innerHTML = rows.join("");
+  const w = $("#verziawarn"); w.hidden = !warn.length; w.textContent = warn.join(" ");
+}
 
 /* nastavenia: stavové údaje zo status (upozornenia, ohrev vody, záložný model, pauza) */
 const fmtT = v => { if (v == null || v === "") return "–"; if (typeof v === "number") return v > 1e9 ? hm(v) : String(Math.floor(v)).padStart(2, "0") + ":00"; const s = String(v); return /^\d{1,2}$/.test(s) ? s.padStart(2, "0") + ":00" : (s.match(/\d{1,2}:\d{2}/)?.[0] || s); };
