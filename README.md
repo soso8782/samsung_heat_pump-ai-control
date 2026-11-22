@@ -3,6 +3,7 @@
 # Samsung Heat Pump AI Control – smart control for Samsung EHS heat pumps
 
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md) [![Slovenčina](https://img.shields.io/badge/jazyk-Sloven%C4%8Dina-green.svg)](README.sk.md)
+[![Testy](https://github.com/soso8782/samsung_heat_pump-ai-control/actions/workflows/testy.yml/badge.svg)](https://github.com/soso8782/samsung_heat_pump-ai-control/actions/workflows/testy.yml)
 
 [![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/sonics007) [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/soso8782)
 If this project saves you money or time, you can buy me a coffee via PayPal or Ko-fi. Thank you! ☕
