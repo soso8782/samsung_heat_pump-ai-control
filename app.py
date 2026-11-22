@@ -11,7 +11,7 @@ from common import (REF_ROOM, ROOM_NAMES, ROOMS, ROOT, S, TARGET_ROOMS, adb, bal
                     hour_stats, is_dry, load_cfg, local_midnight, save_cfg, set_state, tcq, cfg_int)
 from agent import ALLOWED, ROOM_TARGET_ENT, UNDO_MAX_AGE_S, call_llm, chat_reply, parse_room_target, set_room_target, undo, update_days
 import agent as _agent_mod
-import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, verzia, vonku
+import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, verzia, vonku, zdravie
 try:   # štatistiky (stats.py): ak modul chýba, web ostane funkčný a /api/stats/* vráti 503
     import stats
 except Exception:
@@ -1968,6 +1968,8 @@ class H(BaseHTTPRequestHandler):
                 finally:
                     c.close()
                 return self.send(200, {"items": [dict(zip(("id", "ts", "week_from", "week_to", "text", "cost", "kind"), r)) for r in rows]})
+            if u.path == "/api/zdravie":     # len správca (nie je v USER_GET)
+                return self.send(200, zdravie.api(cfg, lang))
             if u.path == "/api/suhrn":
                 c = adb(cfg)
                 try:
