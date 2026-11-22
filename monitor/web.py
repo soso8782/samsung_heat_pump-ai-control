@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Webový prehľad monitoringu TČ - http://<LXC>:8099/ (iba čítanie z SQLite)."""
-import json, os, sqlite3, time
+import json, os, sqlite3, sys, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -396,5 +396,13 @@ class H(BaseHTTPRequestHandler):
         self.send(404, "not found", "text/plain")
 
 
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # Odpojenie klienta (zavretý prehliadač) nie je chyba servera - bez tracebacku v logu
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    _Server(("0.0.0.0", PORT), H).serve_forever()

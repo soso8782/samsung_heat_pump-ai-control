@@ -2361,5 +2361,13 @@ class H(BaseHTTPRequestHandler):
         return self.send(200, {"ok": True})
 
 
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # Odpojenie klienta (zavretý prehliadač) nie je chyba servera - bez tracebacku v logu
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", int(load_cfg()["WEB_PORT"])), H).serve_forever()
+    _Server(("0.0.0.0", int(load_cfg()["WEB_PORT"])), H).serve_forever()
