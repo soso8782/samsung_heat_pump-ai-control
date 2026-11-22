@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Web agenta kúrenia: stav, vypínač agenta, denný kalendár po hodinách, zásahy, upozornenia, prihlásenie."""
-import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request
+import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request, urllib.error
 import profil
 import i18n
 from i18n import tr, tn
@@ -212,6 +212,7 @@ def status(cfg, role="admin", email=None, lang="sk"):
     out["stats"] = stats_brief(cfg, lang)
     out["profil_info"] = profil_info(cfg)
     out["riadiaca"] = riadiaca_info(cfg)
+    out["firmver"] = firmver_info(cfg, out["riadiaca"])
     out["prevadzka"] = prevadzka(cfg, now)
     try:
         ca = adb(cfg)
@@ -598,18 +599,7 @@ RIADIACA_ENT = _agent_mod.RIADIACA_ENT
 _riadiaca_cache = {"t": 0.0, "ttl": 0, "v": None}
 
 
-def riadiaca_mapa(options, izby):
-    """[{moznost, kluc, cidlo}] pre možnosti selectu, ktoré patria izbe z profilu (najdlhší zhodný názov vyhráva)."""
-    out = []
-    for o in options:
-        best = None
-        for r in izby:
-            n = r.get("nazov") or ""
-            if n and (o == n or o.startswith(n + " (")) and (best is None or len(n) > len(best["nazov"])):
-                best = r
-        if best:
-            out.append({"moznost": o, "kluc": best["kluc"], "cidlo": o[len(best["nazov"]):].strip().strip("()").strip()})
-    return out
+riadiaca_mapa = _agent_mod.riadiaca_mapa
 
 
 def riadiaca_info(cfg, force=False):
@@ -619,17 +609,54 @@ def riadiaca_info(cfg, force=False):
         return _riadiaca_cache["v"]
     v = None
     try:
-        url = "%s/select/%s?detail=all" % (cfg["ESP_URL"], urllib.parse.quote(RIADIACA_ENT, safe=""))
-        with urllib.request.urlopen(url, timeout=3) as r:
-            d = json.loads(r.read().decode("utf-8"))
-        opts = [x for x in (d.get("option") or []) if isinstance(x, str)]
+        stav, opts = _agent_mod.esp_select_get(cfg, RIADIACA_ENT)
         if opts:
-            stav = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
-            v = {"stav": stav if isinstance(stav, str) else None, "moznosti": riadiaca_mapa(opts, profil.load()["izby"])}
+            p = profil.load()
+            mo = riadiaca_mapa(opts, p["izby"])
+            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p)}
     except Exception:
         v = None
     _riadiaca_cache.update(t=now, ttl=30 if v else 300, v=v)
     return v
+
+
+FW_ENT = "Verzia firmvéru"
+_fw_cache = {"t": 0.0, "ttl": 0, "v": None}
+
+
+def _mm(v):
+    """'2.12.0' -> (2, 12); neplatné -> None."""
+    m = re.match(r"\s*v?(\d+)\.(\d+)", str(v or ""))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def firmver_info(cfg, riadiaca, force=False):
+    """Verzia firmvéru ESP (text senzor „Verzia firmvéru“) proti major.minor z VERSION.
+    {verzia, pozadovana, stary, nedostupne, hint}; hint = treba ukázať „Firmvér ESP je starší“ (chýba senzor / starší firmvér /
+    ESP odpovedá, ale nemá select „Riadiaca izba“). Výsledok sa drží 60 s (chyba 5 min)."""
+    now = time.time()
+    if force or now - _fw_cache["t"] >= _fw_cache["ttl"]:
+        v, ok = None, True
+        try:
+            url = "%s/text_sensor/%s" % (cfg["ESP_URL"], urllib.parse.quote(FW_ENT, safe=""))
+            with urllib.request.urlopen(url, timeout=3) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            s = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
+            v = s.strip() if isinstance(s, str) and _mm(s) else None
+        except urllib.error.HTTPError:
+            v = None               # ESP odpovedá, ale senzor nemá
+        except Exception:
+            ok = False             # ESP neodpovedá
+        _fw_cache.update(t=now, ttl=60 if ok else 300, v=(v, ok))
+    v, ok = _fw_cache["v"]
+    try:
+        with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as f:
+            need = _mm(f.read())
+    except Exception:
+        need = None
+    stary = bool(ok and need and (_mm(v) is None or _mm(v) < need))
+    return {"verzia": v, "pozadovana": "%d.%d" % need if need else None, "stary": stary, "nedostupne": not ok,
+            "hint": stary or (ok and not riadiaca)}
 
 
 def riadiaca_post(cfg, body, who, lang="sk"):

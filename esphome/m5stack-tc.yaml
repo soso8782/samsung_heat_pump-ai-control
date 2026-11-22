@@ -2,6 +2,10 @@
 # Samsung EHS Split AE120JXEDGH + hydrobox AE160JNYDGH (gen. J, 2018). Názvy entít zodpovedajú predvolenému profilu.
 # Heslá a kľúče sú v secrets.yaml (!secret), entity Home Assistant (izbové senzory) si prepíšte na svoje.
 
+substitutions:
+  # verzia firmvéru: web ju porovná s major.minor súboru VERSION; pri zmene konfigurácie, ktorú web potrebuje, ju zvýš
+  fw_verzia: "2.12.0"
+
 esphome:
   name: m5stack-tc
   friendly_name: m5stack-tc
@@ -1143,6 +1147,17 @@ script:
 # TEXTOVÉ SENZORY (Stav 3-cestného ventilu)
 #########################################################################
 text_sensor:
+  # Verzia firmvéru (konštanta zo substitúcie fw_verzia); číta ju web cez REST API
+  - platform: template
+    name: "Verzia firmvéru"
+    id: fw_verzia_ts
+    lambda: 'return std::string("${fw_verzia}");'
+    update_interval: 300s
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: g_diag
+      sorting_weight: 100
+
   # Čo izbová regulácia práve robí (aktualizuje sa každú minútu z časovej logiky)
   - platform: template
     name: "Stav izbovej regulácie"
