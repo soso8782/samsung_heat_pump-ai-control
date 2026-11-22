@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Webový prehľad monitoringu TČ - http://<LXC>:8099/ (iba čítanie z SQLite)."""
-import json, os, sqlite3, time
+import json, os, sqlite3, sys, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 DB = os.environ.get("TC_DB", "/opt/tc-monitor/tc.db")
 ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(ROOT))   # profil.py, i18n.py sú v koreňovom priečinku aplikácie
+try:
+    import profil
+except Exception:
+    profil = None
 PORT = int(os.environ.get("TC_PORT", "8099"))
 
 # Entity zobrazované v grafoch (názov v ESP -> krátky kľúč)
@@ -235,7 +240,8 @@ def tech(since):
 
 
 # Porovnanie teraz vs. rovnaký čas včera: (popis, entita v samples, HA entity_id pre doplnené hodinové dáta, jednotka)
-COMPARE = [
+# Záložný zoznam – použije sa, ak sa profil nedá načítať. Izby sa berú z profilu (profil.json).
+_COMPARE_FALLBACK = [
     ("Detská – regulačný senzor (ESPresense)", "Sledovaná teplota (Detská izba)", "sensor.detska_izba_espresense_detska_izba_detska_izba_teplota", "°C"),
     ("Detská – Zigbee (overený)", "Izba Detská (Zigbee)", "sensor.detska_t_h_temperature", "°C"),
     ("Jedáleň", "Izba Jedáleň", "sensor.0x00124b0029114db8_temperature", "°C"),
@@ -255,6 +261,40 @@ COMPARE = [
 ]
 
 
+# ESP názvy izbových senzorov v záložnom zozname (tie sa nahrádzajú izbami z profilu)
+_ROOM_ESP_FALLBACK = {x[1] for x in _COMPARE_FALLBACK if x[1].startswith(("Izba ", "Sledovaná teplota ("))}
+
+
+def _compare_rows():
+    """Riadky porovnania: izby z profilu (referenčná prvá), ostatné riadky (vonku, voda, posun, ...) ako doteraz."""
+    if profil is None:
+        return list(_COMPARE_FALLBACK)
+    try:
+        p = profil.load()
+        ref = profil.reference_room(p)
+        izby = sorted(p["izby"], key=lambda r: r["kluc"] != ref)   # stabilné: referenčná prvá
+    except Exception:
+        return list(_COMPARE_FALLBACK)
+    e = p["esp"]["entity"]
+    rows = []
+    for r in izby:
+        ha = r.get("ha") or [""]          # prázdne HA id = bez doplnenia z HA (ha_hourly ho preskočí)
+        if r["kluc"] == ref:
+            # regulačný senzor referenčnej izby (ESPresense) a jej ESP izbová entita (napr. Zigbee)
+            if e.get("sledovana"):
+                rows.append((r["nazov"] + " – regulačný senzor", e["sledovana"], ha[0], "°C"))
+            if r.get("esp"):
+                rows.append((r["nazov"], r["esp"], ha[1] if len(ha) > 1 else ha[0], "°C"))
+        elif r.get("esp"):
+            rows.append((r["nazov"], r["esp"], ha[0], "°C"))
+    # riadky, ktoré nepatria k žiadnej izbe (vonku, voda, posun, frekvencia, príkon, radiátor ...) – zachované
+    rows += [x for x in _COMPARE_FALLBACK if x[1] not in _ROOM_ESP_FALLBACK]
+    return rows
+
+
+COMPARE = _compare_rows()
+
+
 def hourly_tbl():
     c = sqlite3.connect(DB, timeout=30)
     c.execute("CREATE TABLE IF NOT EXISTS hourly(entity TEXT, ts INTEGER, mean REAL, min REAL, max REAL, src TEXT, "
@@ -264,6 +304,8 @@ def hourly_tbl():
 
 def ha_hourly(ha_id, a, b):
     """Hodinové priemery z HA (doplnené) prekrývajúce interval [a, b)."""
+    if not ha_id:
+        return []
     r = q("SELECT mean, ts FROM hourly WHERE (entity=? OR entity LIKE ?) AND ts>? AND ts<?",
           (ha_id, "%" + ha_id, a - 3600, b))
     # vážené prekrytím hodiny s intervalom (aby okrajová hodina nemala plnú váhu)
@@ -345,7 +387,7 @@ def overlay(name, ha_id):
     midnight = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
     today = q("SELECT ts, value FROM samples WHERE entity=? AND ts>=? ORDER BY ts", (name, midnight))
     yest = q("SELECT ts, value FROM samples WHERE entity=? AND ts>=? AND ts<? ORDER BY ts", (name, midnight - 86400, midnight))
-    yh = {t: m for m, t in q("SELECT mean, ts FROM hourly WHERE (entity=? OR entity LIKE ?) AND ts>=? AND ts<?",
+    yh = {} if not ha_id else {t: m for m, t in q("SELECT mean, ts FROM hourly WHERE (entity=? OR entity LIKE ?) AND ts>=? AND ts<?",
                               (ha_id, "%" + ha_id, midnight - 86400, midnight))}
     # minútové vzorky zriedime na 5 min, chýbajúce hodiny doplníme z HA
     ys, have = [], set()
