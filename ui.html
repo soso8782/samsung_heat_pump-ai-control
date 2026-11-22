@@ -247,6 +247,9 @@ svg.plot text{font:11px var(--f-body);fill:var(--mut);font-variant-numeric:tabul
 .vkt .v{font:300 25px/1.2 var(--f-display);margin-top:3px}
 .vkt .v small{font-size:.5em;color:var(--ink-2);margin-left:2px}
 .vkline{margin:10px 0 0;font-size:13.5px;color:var(--ink-2);line-height:1.5}
+table.porv th,table.porv td{text-align:right;padding:5px 8px;border-top:1px solid var(--line)}
+table.porv th:first-child,table.porv td:first-child{text-align:left}
+table.porv tr.pbest td{background:var(--good-bg)}
 table.vkmini{width:auto;min-width:60%;border-collapse:collapse;font-size:13px}
 table.vkmini th,table.vkmini td{text-align:left!important}
 table.vkmini th{text-align:left;font-weight:500;color:var(--mut);padding:3px 12px 3px 0}
@@ -796,7 +799,8 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
 
   <div class="tab" id="tab-izby" role="tabpanel" aria-labelledby="tabl-izby" hidden>
     <section class="panel pad" id="roomlist"><div class="head"><h2 data-i18n="nav.izby">Izby</h2><span class="sub" data-i18n="izby.sub">Aktuálna teplota · klikni na izbu pre detail</span><button type="button" class="btn sm" id="vkbtn" aria-expanded="false" aria-controls="vkbox" data-i18n="izby.vk_btn">Ako kúri podľa vonku</button></div>
-    <div class="bigrooms" id="bigrooms"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div></section>
+    <div class="bigrooms" id="bigrooms"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
+    <div id="porbox" hidden></div></section>
     <section class="panel pad" id="vkbox" hidden>
       <div class="head"><h2 data-i18n="izby.vk_titul">Ako kúri podľa vonkajšej teploty</h2><span class="sub" id="vkrange"></span><button type="button" class="btn sm" id="vkclose" data-i18n="spolocne.zavriet">Zavrieť</button></div>
       <div class="vkcard" id="vkcurve" hidden></div>
@@ -1372,7 +1376,7 @@ function activate(id) {
   const first = !loadedTabs.has(id); loadedTabs.add(id);
   if (id === "prehlad") { drawScale(); const th = $("#thread"); th.scrollTop = th.scrollHeight; if (first) { loadMessages().catch(() => {}); if (!isUser()) loadInterventions().catch(() => {}); } }
   else if (id === "spotreba") loadSpotreba().catch(() => {});
-  else if (id === "izby") { renderBigRooms(statusData || {}); vkSync(true); }
+  else if (id === "izby") { renderBigRooms(statusData || {}); vkSync(true); loadPor().catch(() => {}); }
   else if (id === "tuv") renderTuv(statusData || {});
   else if (id === "den") { if (dayData) drawCharts(); if (!dayData) loadDay().catch(() => {}); else if (dayStale) loadDay(true).catch(() => {}); if (first) loadHistory().catch(() => {}); }
   else if (id === "statistiky") loadStatsUI();
@@ -1565,6 +1569,25 @@ function vkRange() {
   if (vkPer === "30") { const d = new Date(); d.setDate(d.getDate() - 29); return [dstr(d), t]; }
   if (vkPer === "minula") return [(y - 1) + "-10-01", y + "-04-30"];
   return [null, t];
+}
+/* porovnanie riadiacich čidiel (správca): api/riadiaca/porovnanie; najmenší rozptyl zvýraznený, upozornenia na málo dát a rôzne vonkajšie teploty */
+async function loadPor() {
+  const box = $("#porbox"); if (!box) return;
+  if (isUser()) { box.hidden = true; return; }
+  const d = await api("api/riadiaca/porovnanie?days=30"), ms = (d && d.moznosti) || [];
+  if (d.error || !ms.length) { box.hidden = true; return; }
+  const f = (v, n) => v == null ? "–" : Number(v).toFixed(n), enough = ms.filter(x => x.hodin >= 48 && x.rozptyl != null);
+  const best = enough.length > 1 ? Math.min(...enough.map(x => x.rozptyl)) : null;
+  const outs = ms.map(x => x.vonku).filter(v => v != null), outDiff = outs.length > 1 && Math.max(...outs) - Math.min(...outs) > 3;
+  const th = ["moznost", "hodin", "rozptyl", "odchylka", "starty", "kratke", "kwh", "cop", "vonku"].map(k => `<th>${esc(t("izby.por_" + k))}</th>`).join("");
+  const rows = ms.map(x => `<tr${best != null && x.hodin >= 48 && x.rozptyl === best ? ' class="pbest"' : ""}><td>${esc(x.moznost)}${x.hodin < 48 ? ` <small class="sub">(${esc(t("izby.por_malo"))})</small>` : ""}</td>` +
+    `<td>${x.hodin}</td><td><b>${f(x.rozptyl, 2)}</b></td><td>${f(x.odchylka, 2)}</td><td>${f(x.starty_h, 2)}</td><td>${x.kratke == null ? "–" : x.kratke}</td><td>${f(x.kwh_den, 1)}</td><td>${f(x.cop, 2)}</td><td>${f(x.vonku, 1)}</td></tr>`).join("");
+  box.innerHTML = `<div class="head" style="margin-top:18px"><h3 style="margin:0">${esc(t("izby.por_titul"))}</h3><span class="sub">${esc(t("izby.por_sub"))}</span></div>` +
+    `<div class="scroll"><table class="porv"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>` +
+    (ms.some(x => x.hodin < 48) ? `<p class="sub" style="font-size:12.5px;margin:8px 0 0">${esc(t("izby.por_malo_hint"))}</p>` : "") +
+    (outDiff ? `<p class="sub" style="font-size:12.5px;margin:8px 0 0;color:var(--warn-ink)">${esc(t("izby.por_vonku_rozdiel"))}</p>` : "") +
+    (d.poznamka ? `<p class="sub" style="font-size:12px;margin:8px 0 0">${esc(d.poznamka)}</p>` : "");
+  box.hidden = false;
 }
 function vkSync(load) {
   const show = vkOpen && !roomDetail;

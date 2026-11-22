@@ -1008,6 +1008,13 @@ def build_input(cfg, c, now, reasons=None, pre=None):
             notel.insert(0, _p("riad_nesulad", ml, esp=nm.get(ns["esp_izba"], ns["esp_izba"]), profil=nm.get(ns["profil_izba"], ns["profil_izba"])))
     except Exception:
         pass
+    try:   # porovnanie riadiacich čidiel (len informácia; riadok iba ak ≥ 2 možnosti majú ≥ 48 h dát)
+        import porovnanie
+        pl = porovnanie.agent_line(cfg, ml, now)
+        if pl:
+            notel.insert(0, pl)
+    except Exception:
+        pass
     head = ([_p("why_now", ml) + "; ".join(reasons), ""] if reasons else [])
     try:
         ab = abtest.llm_text(c, now, ml)
