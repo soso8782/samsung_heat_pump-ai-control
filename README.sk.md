@@ -26,6 +26,11 @@ a agenta“. *English documentation: [README.md](README.md).*
 
 - **Prehľad v reálnom čase** – teplota vody (výstup/spiatočka, ΔT), kompresor, odmrazovanie, 3-cestný ventil, TÚV, chybové kódy.
 - **Izby** – teploty z Home Assistant (Zigbee/ESPHome čidlá), cieľové minimá, detail izby s grafom, otvorené okná/dvere.
+- **Riadiaca izba** – kliknutím vyberieš izbu a čidlo, podľa ktorého ESP reguluje (select „Riadiaca izba“ vo firmvéri);
+  história prepnutí v grafe izby, upozornenie na nesúlad ESP a profilu, upozornenie pri výpadku riadiaceho čidla
+  a porovnanie čidiel (rozptyl teplôt izieb, odchýlka od cieľa, cyklovanie, kWh/deň, COP).
+- **Týždenný súhrn kúrenia** – každý pondelok ráno: teploty a rozptyl izieb, vonku, spotreba a cena, COP, štarty kompresora,
+  TÚV, zásahy agenta a krátke odporúčanie AI (napr. k vyregulovaniu ventilov).
 - **Ako kúri podľa vonku** – nastavenie krivky (FSV 2011/2012/2021/2022/2031/2032/4013, posun, zosilnenie), história zmien FSV,
   graf a tabuľka skutočnej teploty vody pri danej vonkajšej teplote (len minúty, keď naozaj kúri do radiátorov) a min/max
   teploty izieb podľa vonkajšej teploty.
@@ -42,6 +47,7 @@ a agenta“. *English documentation: [README.md](README.md).*
 - **Upozornenia** – Web Push (PWA na iPhone/Android) a HA webhook: chyba TČ, dohrev, okno otvorené pri kúrení, kredit, …
 - **Prihlásenie** – heslo pre správcu, voliteľne Cloudflare Tunnel + Access (overenie JWT), role admin/user.
 - **Štatistiky** – hodinová databáza, cykly kompresora, poruchy, porovnania, export.
+- **Údržba** – `update.sh` (bezpečná aktualizácia z gitu s návratom pri chybe), verzia firmvéru ESP vo webe, testy v CI na GitHube.
 
 ## Architektúra
 

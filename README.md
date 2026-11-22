@@ -27,6 +27,11 @@ web UI under Settings → "Language of notifications and the agent". *Slovak doc
 - **Real-time overview** – water temperature (flow/return, ΔT), compressor, defrost, 3-way valve, DHW, error codes.
 - **Rooms** – temperatures from Home Assistant (Zigbee/ESPHome sensors), minimum target temperatures, room detail with a chart,
   open windows/doors.
+- **Reference room** – click a room to choose the room and sensor the ESP regulates by (firmware select "Riadiaca izba");
+  switch history in the room chart, warning when the ESP and the profile disagree, alert when the reference sensor stops
+  reporting, and a sensor comparison (room temperature spread, deviation from target, cycling, kWh/day, COP).
+- **Weekly heating summary** – every Monday morning: room temperatures and spread, outdoor, consumption and cost, COP,
+  compressor starts, DHW, agent interventions and a short AI recommendation (e.g. on balancing the radiator valves).
 - **How it heats by outdoor temperature** – heating curve settings (FSV 2011/2012/2021/2022/2031/2032/4013, curve offset, gain),
   FSV change history, a chart and table of the actual water temperature at a given outdoor temperature (only minutes when the
   unit is really heating the radiators), and the min/max room temperatures by outdoor temperature.
@@ -46,6 +51,7 @@ web UI under Settings → "Language of notifications and the agent". *Slovak doc
   heating, credit, …
 - **Login** – administrator password, optionally Cloudflare Tunnel + Access (JWT verification), admin/user roles.
 - **Statistics** – hourly database, compressor cycles, faults, comparisons, export.
+- **Maintenance** – `update.sh` (safe update from git with rollback on failure), ESP firmware version in the web UI, CI tests on GitHub.
 
 ## Architecture
 
