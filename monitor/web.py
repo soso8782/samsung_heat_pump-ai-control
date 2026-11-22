@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Webový prehľad monitoringu TČ - http://<LXC>:8099/ (iba čítanie z SQLite)."""
-import json, os, sqlite3, sys, time
+import json, os, re, sqlite3, sys, time, unicodedata
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -242,7 +242,7 @@ def tech(since):
 # Porovnanie teraz vs. rovnaký čas včera: (popis, entita v samples, HA entity_id pre doplnené hodinové dáta, jednotka)
 # Záložný zoznam – použije sa, ak sa profil nedá načítať. Izby sa berú z profilu (profil.json).
 _COMPARE_FALLBACK = [
-    ("Detská – regulačný senzor (ESPresense)", "Sledovaná teplota (Detská izba)", "sensor.detska_izba_espresense_detska_izba_detska_izba_teplota", "°C"),
+    ("Detská – riadiace čidlo", "Sledovaná teplota (Detská izba)", "m5stack_tc_sledovana_teplota_detska_izba", "°C"),
     ("Detská – Zigbee (overený)", "Izba Detská (Zigbee)", "sensor.detska_t_h_temperature", "°C"),
     ("Jedáleň", "Izba Jedáleň", "sensor.0x00124b0029114db8_temperature", "°C"),
     ("Jedáleň – radiátor (hlavica)", "Radiátor Jedáleň (hlavica)", "sensor.jedalen_radiator_local_temperature", "°C"),
@@ -265,6 +265,12 @@ _COMPARE_FALLBACK = [
 _ROOM_ESP_FALLBACK = {x[1] for x in _COMPARE_FALLBACK if x[1].startswith(("Izba ", "Sledovaná teplota ("))}
 
 
+def _esp_ha_id(esp_name):
+    """HA entity_id ESP entity (prefix m5stack_tc_ + slug názvu ako v ESPHome/HA: bez diakritiky, a-z0-9, ostatné -> _)."""
+    s = unicodedata.normalize("NFKD", str(esp_name)).encode("ascii", "ignore").decode("ascii").lower()
+    return "m5stack_tc_" + re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+
+
 def _compare_rows():
     """Riadky porovnania: izby z profilu (referenčná prvá), ostatné riadky (vonku, voda, posun, ...) ako doteraz."""
     if profil is None:
@@ -280,9 +286,9 @@ def _compare_rows():
     for r in izby:
         ha = r.get("ha") or [""]          # prázdne HA id = bez doplnenia z HA (ha_hourly ho preskočí)
         if r["kluc"] == ref:
-            # regulačný senzor referenčnej izby (ESPresense) a jej ESP izbová entita (napr. Zigbee)
+            # riadiace čidlo (select „Riadiaca izba“ na ESP – nemusí byť izba referenčná) a jej ESP izbová entita (napr. Zigbee)
             if e.get("sledovana"):
-                rows.append((r["nazov"] + " – regulačný senzor", e["sledovana"], ha[0], "°C"))
+                rows.append((r["nazov"] + " – riadiace čidlo", e["sledovana"], _esp_ha_id(e["sledovana"]), "°C"))
             if r.get("esp"):
                 rows.append((r["nazov"], r["esp"], ha[1] if len(ha) > 1 else ha[0], "°C"))
         elif r.get("esp"):

@@ -54,6 +54,15 @@ def strip_fw(text):
     return text
 
 
+# Dátum v riadku „DNES:“ pre učenie (agent.learn) sa berie z reálneho času (time.strftime bez argumentu), nie zo zafixovaných
+# hodín worker-a, takže sa mení s dňom spustenia. Porovnáva sa text okolo neho; samotný dátum sa normalizuje na oboch stranách.
+DATE_LINE = re.compile(r"^(DNES: )\d{2}\.\d{2}\.\d{4}", re.M)
+
+
+def no_today(text):
+    return DATE_LINE.sub(r"\1<dátum>", text)
+
+
 def diff(a, b, n=3):
     return "\n".join(list(difflib.unified_diff(a.split("\n"), b.split("\n"), "snapshot", "teraz", lineterm="", n=n))[:60])
 
@@ -74,7 +83,8 @@ class SkSnapshot(unittest.TestCase):
         self.assertEqual([c["label"] for c in self.new["calls"]], [c["label"] for c in self.old["calls"]])
         for o, n in zip(self.old["calls"], self.new["calls"]):
             self.assertEqual(n["system"], o["system"], "system prompt %s sa zmenil:\n%s" % (o["label"], diff(o["system"], n["system"])))
-            self.assertEqual(n["user"], o["user"], "vstup %s sa zmenil:\n%s" % (o["label"], diff(o["user"], n["user"])))
+            ou, nu = no_today(o["user"]), no_today(n["user"])
+            self.assertEqual(nu, ou, "vstup %s sa zmenil:\n%s" % (o["label"], diff(ou, nu)))
 
     def test_results_unchanged(self):
         self.assertEqual(self.new["results"], self.old["results"])
