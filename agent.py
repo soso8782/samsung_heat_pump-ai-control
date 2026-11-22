@@ -1527,6 +1527,8 @@ def next_run_after(now, interval_min):
 
 WD_COLLECTOR_STALE_S = 900
 WD_BACKUP_MAX_S = 1800
+CIDLO_TEXT = "Čakám na teplotu"          # text firmvéru v "Stav izbovej regulácie", keď riadiace čidlo mlčí
+CIDLO_STAV_ENTITA = "Stav izbovej regulácie"
 
 
 def _esp_val(cfg, domain, name):
@@ -1602,6 +1604,31 @@ def event_trigger(cfg, c, alerts, prev_kinds, now):
     return reason
 
 
+def cidlo_vypadok(cfg, now):
+    """Ako dlho (s) mlčí riadiace izbové čidlo, alebo None. Zdroje: (1) posledná vzorka sledovanej teploty v tc.db
+    (zberač ukladá len platné hodnoty), (2) text "Čakám na teplotu" v stave izbovej regulácie (začiatok súvislého úseku
+    v udalostiach). Pri neaktuálnom zberači sa nehodnotí (rieši ho poplach zberača). Vráti najdlhší z oboch údajov."""
+    ent = profil.device_entity("sledovana")
+    if not ent:
+        return None
+    r = tcq(cfg, "SELECT v FROM meta WHERE k='last_sample'")
+    if now - int((r[0][0] if r else 0) or 0) > WD_COLLECTOR_STALE_S:
+        return None
+    out = None
+    r = tcq(cfg, "SELECT max(ts) FROM samples WHERE entity=?", (ent,))
+    if r and r[0][0] is not None:
+        out = now - int(r[0][0])
+    since = None
+    for ts, new in tcq(cfg, "SELECT ts, new FROM events WHERE entity=? ORDER BY ts DESC LIMIT 500", (CIDLO_STAV_ENTITA,)):
+        if CIDLO_TEXT in (new or ""):
+            since = ts
+        else:
+            break
+    if since is not None:
+        out = max(out or 0, now - int(since))
+    return out
+
+
 def watchdog_tick(cfg, c, wd, now=None):
     """Jedna kontrola strážcu (každú minútu z watchdog_loop). `wd` = slovník s pamäťou vlákna. Vracia zoznam poplachov."""
     now = int(now or time.time())
@@ -1666,6 +1693,23 @@ def watchdog_tick(cfg, c, wd, now=None):
         elif get_state(c, "wd_backup_since"):
             set_state(c, "wd_backup_since", "")
 
+    def chk_cidlo():
+        try:
+            lim = int(float(cfg.get("CIDLO_STALE_MIN") or 60)) * 60
+        except ValueError:
+            lim = 3600
+        dur = cidlo_vypadok(cfg, now) if lim > 0 else None
+        if dur is not None and dur > lim:
+            alerts["cidlo"] = tr("srv.agent.cidlo", hl, n=dur // 60)
+            if get_state(c, "wd_cidlo_sent") != "1":          # jedno upozornenie na výpadok
+                ok, e = notify_("cidlo", tr("srv.agent.cidlo_t", hl), alerts["cidlo"])
+                if ok or e == "nenastavené":
+                    set_state(c, "wd_cidlo_sent", "1")
+        elif get_state(c, "wd_cidlo_sent") == "1" and (dur is not None or lim <= 0):   # dur None = nehodnotené, nie obnovené
+            ok, e = notify_("cidlo_ok", tr("srv.agent.cidlo_ok_t", hl), tr("srv.agent.cidlo_ok", hl))
+            if ok or e == "nenastavené":
+                set_state(c, "wd_cidlo_sent", "0")
+
     def chk_runs():
         rows = c.execute("SELECT status, error FROM runs WHERE status NOT IN ('info','rutina') ORDER BY ts DESC LIMIT 3").fetchall()
         if len(rows) == 3 and all(r[0] == "chyba" for r in rows):
@@ -1699,6 +1743,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_collector)
     safe(chk_ha)
     safe(chk_esp)
+    safe(chk_cidlo)
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))
