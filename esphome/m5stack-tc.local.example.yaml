@@ -1,0 +1,19 @@
+# Lokálny obal: skopírujte ako m5stack-tc.local.yaml (vedľa m5stack-tc.yaml a secrets.yaml)
+# a upravte hodnoty. Kompiluje a nahráva sa TENTO súbor; m5stack-tc.yaml sa nikdy needituje,
+# pri aktualizácii sa len nahradí novou verziou z repozitára.
+# Substitúcie v tomto (hlavnom) súbore majú prednosť pred predvolenými v balíku.
+# Uveďte len to, čo sa vo vašej inštalácii líši.
+substitutions:
+  esp_ip: 192.168.1.199
+  ha_izba_jedalen: sensor.jedalen_t_h_temperature
+  ha_radiator_jedalen: sensor.jedalen_radiator_local_temperature
+  ha_izba_obyvacka: sensor.obyvacka_t_h_cidlo_temperature
+  ha_izba_detska_zigbee: sensor.detska_t_h_temperature
+  ha_izba_kupelna: sensor.kupelna_t_h_temperature
+  ha_izba_spalna: sensor.spalna_t_h_cidlo_2_kruhovy_temperature
+  ha_izba_pracovna: sensor.pracovna_t_h_cidlo_temperature
+  ha_izba_kuchyna: sensor.t_h_kuchyna_temperature
+  ha_detska_espresense: sensor.detska_izba_espresense_detska_izba_detska_izba_teplota
+
+packages:
+  base: !include m5stack-tc.yaml
