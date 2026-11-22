@@ -571,6 +571,11 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
 .cl{fill:none;stroke:var(--copper);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .ct{fill:none;stroke:var(--ink-2);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}
 .chv{stroke:var(--line-2);stroke-width:1}
+.cmk{stroke:var(--ink-2);stroke-width:1.2;stroke-dasharray:2 3;opacity:.85}
+svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
+.cband{opacity:.9}
+.crl{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:12px;color:var(--mut)}
+.crl i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .chd{fill:var(--copper);stroke:var(--panel);stroke-width:2}
 /* reagovanie */
 @media (max-width:1240px){#systext{display:none}}
@@ -2259,9 +2264,23 @@ function chartDraw(id) {
     if (prev === null || t - prev > gap) { line += `M${x} ${y}`; const nx = pts[i + 1]; if (!nx || nx[0] - t > gap) line += "h.01"; } else line += `L${x} ${y}`; prev = t; });
   let tp = ""; tg.forEach(([t, v], i) => { const x = r1(X(Math.max(t, t0))); tp += i ? `H${x}V${r1(Y(v))}` : `M${x} ${r1(Y(v))}`; });
   const lastT = pts[pts.length - 1][0]; if (tg.length && lastT > tg[tg.length - 1][0]) tp += `H${r1(X(lastT))}`;
+  /* prepnutia riadiacej izby: pás pri spodku grafu (podľa čidla), zvislé značky s popisom „Riadiaca: <možnosť>“ a legenda */
+  const rd = d.riadiaca || {}, rz = (rd.zmeny || []).filter(z => z.ts >= t0 && z.ts <= t1), segs = [];
+  if (rd.zaciatok || rz.length) { let cur = rd.zaciatok || rz[0].stary, from = t0;
+    for (const z of rz) { segs.push([from, z.ts, cur]); cur = z.novy; from = z.ts; } segs.push([from, t1, cur]); }
+  const rnames = [...new Set(segs.map(x => x[2]).filter(Boolean))], rcol = o => "var(--s" + (rnames.indexOf(o) % 8 + 1) + ")";
+  let rb = "", lastLx = -1e9;
+  if (rz.length || rnames.length > 1 || (rnames.length === 1 && rd.zaciatok)) {
+    for (const [a, b, o] of segs) if (o && b > a) rb += `<rect class="cband" x="${r1(X(a))}" y="${T + ph - 4}" width="${r1(Math.max(1, X(b) - X(a)))}" height="4" fill="${rcol(o)}"><title>${esc(t("izby.riadiaca_znacka", {o}))}</title></rect>`;
+    for (const z of rz) { const x = X(z.ts), lab = t("izby.riadiaca_znacka", {o: z.novy}), right = x > W - R - 110;
+      rb += `<g><title>${esc(t("izby.riadiaca_tip", {o: z.novy, w: wdLong(z.ts) + " " + dmShort(z.ts) + " " + hm(z.ts)}))}${z.kto ? " · " + esc(z.kto) : ""}</title><line class="cmk" x1="${r1(x)}" x2="${r1(x)}" y1="${T}" y2="${T + ph}"/>`;
+      if (Math.abs(x - lastLx) > 96) { rb += `<text class="cml" x="${r1(x + (right ? -4 : 4))}" y="${T + 10}" text-anchor="${right ? "end" : "start"}">${esc(lab)}</text>`; lastLx = x; }
+      rb += `</g>`; }
+  }
   const s = d.stats || {}, mn = num(s.min) ?? Math.min(...pts.map(p => p[1])), mx = num(s.max) ?? Math.max(...pts.map(p => p[1])), av = num(s.avg) ?? pts.reduce((a, p) => a + p[1], 0) / pts.length;
   plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(t("izby.graf_aria", {days, mn: f(mn), av: f(av), mx: f(mx)}))}">${g}` +
-    (tp ? `<path class="ct" d="${tp}"/>` : "") + `<path class="cl" d="${line}"/><line class="chv" y1="${T}" y2="${T + ph}" style="display:none"/><circle class="chd" r="4.5" style="display:none"/></svg><div class="ctip" hidden></div>`;
+    (tp ? `<path class="ct" d="${tp}"/>` : "") + rb + `<path class="cl" d="${line}"/><line class="chv" y1="${T}" y2="${T + ph}" style="display:none"/><circle class="chd" r="4.5" style="display:none"/></svg><div class="ctip" hidden></div>` +
+    (rb && rnames.length ? `<div class="crl"><span>${t("izby.riadiaca_legenda")}</span>${rnames.map(o => `<span><i style="background:${rcol(o)}"></i>${esc(o)}</span>`).join("")}</div>` : "");
   sb.innerHTML = [[t("spolocne.min_l"), mn], [t("spolocne.priemer_l"), av], [t("spolocne.max_l"), mx]].map(([l, v]) => `<div>${l}<b>${f(v)} °C</b></div>`).join("");
   const svg = plot.querySelector("svg"), tip = plot.querySelector(".ctip"), vl = svg.querySelector(".chv"), dot = svg.querySelector(".chd");
   const hide = () => { tip.hidden = true; vl.style.display = dot.style.display = "none"; };

@@ -92,6 +92,8 @@ def adb(cfg):
     CREATE TABLE IF NOT EXISTS actions(ts INTEGER, entity TEXT, old REAL, new REAL, reason TEXT,
         applied INTEGER, result TEXT);
     CREATE INDEX IF NOT EXISTS actions_ts ON actions(ts);
+    CREATE TABLE IF NOT EXISTS riadiaca_log(ts INTEGER, stary TEXT, novy TEXT, kluc TEXT, kto TEXT);
+    CREATE INDEX IF NOT EXISTS riadiaca_log_ts ON riadiaca_log(ts);
     CREATE TABLE IF NOT EXISTS days(date TEXT PRIMARY KEY, data TEXT);
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, ts INTEGER, role TEXT, text TEXT, cost REAL);
     CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);

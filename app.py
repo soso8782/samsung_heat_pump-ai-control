@@ -573,7 +573,14 @@ def series_get(cfg, p, lang="sk"):
         target = _series_rows(cfg, SERIES_TARGET[k], since, bin_s)
     vals = [v for _, v in points]
     stats_ = {"min": min(vals), "max": max(vals), "avg": round(sum(vals) / len(vals), 2), "now": vals[-1]} if vals else None
-    return 200, {"k": k, "days": days, "from": since, "to": now, "bin_s": bin_s, "points": points, "target": target, "stats": stats_}
+    out = {"k": k, "days": days, "from": since, "to": now, "bin_s": bin_s, "points": points, "target": target, "stats": stats_}
+    if k != "bojler":   # prepnutia riadiacej izby (zvislé značky a pásy v grafe izby)
+        c = adb(cfg)
+        try:
+            out["riadiaca"] = riadiaca_prepnutia(cfg, c, since, now + 1)
+        finally:
+            c.close()
+    return 200, out
 
 
 def tuv_boost_post(cfg, body, who, lang="sk"):
@@ -632,6 +639,43 @@ def riadiaca_info(cfg, force=False):
     return v
 
 
+RIADIACA_MATCH_S = 180   # zmena selectu v ESP ±3 min od zápisu z webu = tá istá zmena
+
+
+def riadiaca_prepnutia(cfg, c, a, b):
+    """Prepnutia selectu „Riadiaca izba“ v [a, b): {zaciatok: možnosť platná na začiatku alebo None,
+    zmeny: [{ts, stary, novy, kluc, cidlo, kto, zdroj}]}. Základ sú zmeny stavu selectu zo zberača (tabuľka events: zachytí aj zmeny
+    priamo v ESP/HA); zápisy z webu (tabuľka riadiaca_log) k nim pridávajú `kto` a sú s nimi zlúčené (rovnaká nová možnosť ±3 min,
+    zdroj „web“); web zápis bez zmeny v zberači (zberač nebežal) sa pridá sám. Pri chybe DB prázdny výsledok."""
+    try:
+        ev = tcq(cfg, "SELECT ts, old, new FROM events WHERE entity=? AND old IS NOT NULL AND new IS NOT NULL AND ts>=? AND ts<? ORDER BY ts",
+                 (RIADIACA_ENT, a, b))
+        prev = tcq(cfg, "SELECT new FROM events WHERE entity=? AND new IS NOT NULL AND ts<? ORDER BY ts DESC LIMIT 1", (RIADIACA_ENT, a))
+    except Exception:
+        ev, prev = [], []
+    try:
+        web = c.execute("SELECT ts, stary, novy, kluc, kto FROM riadiaca_log WHERE ts>=? AND ts<? ORDER BY ts", (a - RIADIACA_MATCH_S, b)).fetchall()
+    except sqlite3.Error:
+        web = []
+    web = [list(w) + [False] for w in web]
+    out = []
+    for t, o, n in ev:
+        w = next((x for x in web if not x[5] and x[2] == n and abs(x[0] - t) <= RIADIACA_MATCH_S), None)
+        if w:
+            w[5] = True
+        out.append({"ts": t, "stary": o, "novy": n, "kto": w[4] if w else None, "zdroj": "web" if w else "esp"})
+    for t, o, n, k, who, used in web:
+        if not used and a <= t < b:
+            out.append({"ts": t, "stary": o, "novy": n, "kto": who, "zdroj": "web"})
+    out.sort(key=lambda x: x["ts"])
+    izby = profil.load()["izby"]
+    for x in out:
+        m = riadiaca_mapa([x["novy"]], izby)
+        x["kluc"], x["cidlo"] = (m[0]["kluc"], m[0]["cidlo"]) if m else (None, "")
+    zac = prev[0][0] if prev else (out[0]["stary"] if out else None)
+    return {"zaciatok": zac, "zmeny": out}
+
+
 def riadiaca_post(cfg, body, who, lang="sk"):
     """POST /api/riadiaca {moznost} (iba správca): prepne čidlo izbovej regulácie v ESP; ak patrí inej izbe, zmení referenčnú
     izbu v profile a reštartuje služby. Vracia {ok, moznost, kluc, restart[, note]}."""
@@ -675,9 +719,13 @@ def riadiaca_post(cfg, body, who, lang="sk"):
             if errs:
                 return 500, {"error": tr("srv.app.riadiaca_profil", lang, err="; ".join(errs))}
         hl = i18n.home_lang(cfg)
+        now_ts = int(time.time())
+        old_opt = (info.get("stav") if isinstance(info.get("stav"), str) else None) or names.get(old_ref, old_ref)
         c.execute("INSERT INTO runs(ts,mode,status,stav,summary,actions) VALUES(?,?,?,?,?,?)",
-                  (int(time.time()), get_state(c, "mode", "advise"), "info", None,
+                  (now_ts, get_state(c, "mode", "advise"), "info", None,
                    tr("srv.app.riadiaca_log", hl, who=who, old=names.get(old_ref, old_ref), new=opt), "[]"))
+        # strojovo čitateľný záznam pre grafy (riadok runs ostáva len ľudské zhrnutie)
+        c.execute("INSERT INTO riadiaca_log(ts,stary,novy,kluc,kto) VALUES(?,?,?,?,?)", (now_ts, old_opt, opt, m["kluc"], who))
         c.commit()
     finally:
         c.close()
@@ -758,6 +806,7 @@ def day(cfg, dstr, lang="sk"):
         okna_day = contacts.window_minutes(c, a, b)
     except Exception:
         okna_day = None
+    riad = riadiaca_prepnutia(cfg, c, a, b)
     c.close()
     summ = day_summary(cfg, a, b, hours)
     summ["okna_min"] = None if okna_day is None else round(okna_day)
@@ -766,7 +815,8 @@ def day(cfg, dstr, lang="sk"):
     return {"date": time.strftime("%Y-%m-%d", time.localtime(a)), "a": a, "b": b, "hours": hours, "summary": summ,
             "day_review": les[0] if les else None, "messages": messages(cfg, a=a, b=b), "okna": okna, "temps": day_temps,
             "events": [dict(zip(("ts", "kind", "entity", "old", "new", "text"), (e[0], e[1], i18n.event_entity(e[2], lang), e[3], e[4], i18n.event_text(e[5], lang) if e[5] else e[5]))) for e in ev],
-            "notes": [dict(zip(("ts", "author", "title", "body"), n)) for n in notes], "runs": runs, "interventions": ivs}
+            "notes": [dict(zip(("ts", "author", "title", "body"), n)) for n in notes], "runs": runs, "interventions": ivs,
+            "riadiaca": riad}
 
 
 def history(cfg):
