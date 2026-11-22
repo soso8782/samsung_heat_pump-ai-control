@@ -147,3 +147,4 @@ table.st-tbl{font-size:13px;width:100%}
 .zd-tr{flex:none;color:var(--ink-2)}
 .zd-find{margin:4px 0 0;padding-left:18px;font-size:13.5px}
 @media (max-width:640px){.zd-row{flex-wrap:wrap}.zd-tr{margin-left:24px}}
+.st-ev{margin:0;padding-left:18px}.st-ev li{margin:4px 0}

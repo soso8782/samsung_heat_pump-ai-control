@@ -11,7 +11,7 @@ from common import (REF_ROOM, ROOM_NAMES, ROOMS, ROOT, S, TARGET_ROOMS, adb, bal
                     hour_stats, is_dry, load_cfg, local_midnight, save_cfg, set_state, tcq, cfg_int)
 from agent import ALLOWED, ROOM_TARGET_ENT, UNDO_MAX_AGE_S, call_llm, chat_reply, parse_room_target, set_room_target, undo, update_days
 import agent as _agent_mod
-import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, verzia, vonku, zdravie
+import porovnanie, abtest, ha_api, ha_auth, cfjwt, cftunnel, contacts, contacts_mqtt, dhw, interventions, mcp_api, notify, spotreba, temps, verzia, vonku, zdravie, naklady
 try:   # štatistiky (stats.py): ak modul chýba, web ostane funkčný a /api/stats/* vráti 503
     import stats
 except Exception:
@@ -1332,7 +1332,7 @@ def session_valid(c, tok):
 
 
 LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
-USER_GET = ("/api/status", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
+USER_GET = ("/api/status", "/api/messages", "/api/push/key", "/api/push/status", "/api/series", "/api/spotreba", "/api/naklady/odhad", "/api/vonku", "/api/akokuri")    # čo smie rola `user` (okrem /api/auth a statických súborov)
 USER_POST = ("/api/message", "/api/user_target", "/api/tuv_boost", "/api/logout", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test", "/api/push/remove")
 NO_PERM = {"error": "Na túto akciu nemáš oprávnenie."}
 
@@ -1875,6 +1875,13 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/spotreba":   # denná spotreba domu a odhad ceny (spotreba.py); neplatný vstup = 400 s textom
                 try:
                     return self.send(200, spotreba.report(cfg, p.get("od", [""])[0] or None, p.get("do", [""])[0] or None, lang=lang))
+                except ValueError as e:
+                    return self.send(400, {"error": str(e)})
+            if u.path == "/api/naklady/odhad":   # odhad nákladov čerpadla do konca mesiaca / obdobia / sezóny (naklady.py, len čítanie)
+                return self.send(200, naklady.odhad(cfg, lang=lang))
+            if u.path == "/api/sezona":   # prehľad vykurovacej sezóny (?rok=YYYY); neplatný rok = 400 s textom
+                try:
+                    return self.send(200, naklady.sezona(cfg, p.get("rok", [""])[0] or None, lang=lang))
                 except ValueError as e:
                     return self.send(400, {"error": str(e)})
             if u.path == "/api/vonku":   # teploty podľa vonkajšej teploty (vonku.py); neplatný vstup = 400 s textom
