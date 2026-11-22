@@ -19,6 +19,7 @@ DEFAULTS = {
     "UI_LANG": "sk",             # jazyk upozornení, agenta a HA senzorov (sk / en); jazyk webu si volí každý v prehliadači
     "HA_URL": "http://homeassistant.local:8123",
     "HA_TOKEN": "",
+    "HA_PRITOMNOST": "",         # entity_id prítomnosti v HA (group/person/zone, čiarkou oddelené); prázdne = bez automatiky „Preč z domu“
     "DRY_RUN": "0",
     "TC_DB": os.path.join(ROOT, "tc.db"),
     "AGENT_DB": os.path.join(ROOT, "agent.db"),

@@ -12,7 +12,7 @@ import datetime, json, re, socket, sqlite3, threading, time, traceback, urllib.e
 import profil
 from common import (P, REF_NAME, REF_ROOM, ROOM_NAMES, ROOMS, S, SETTINGS, TARGET_ROOMS, adb, balance, cfg_int, day_bounds, day_summary,
                     dhw_intervals, get_state, get_targets, hour_stats, is_dry, load_cfg, local_midnight, set_state, tcq)
-import abtest, contacts, dhw, interventions, notify, temps, zdravie, tarifa
+import abtest, contacts, dhw, interventions, notify, temps, zdravie, tarifa, utlm
 import i18n
 from i18n import tr
 
@@ -501,7 +501,7 @@ def _live_value(cfg, entity, value, now=None):
         pass
 
 
-def set_room_target(cfg, c, value, who, lang="sk"):
+def set_room_target(cfg, c, value, who, lang="sk", reason=None):
     """Nastaví cieľovú izbovú teplotu (jediná cesta: web správcu aj chat). V DRY_RUN sa do ESP nezapisuje.
     Zapíše riadok do actions aj runs. Vracia {"old","new","dry"}; ValueError = neplatný vstup, RuntimeError = zápis zlyhal."""
     v = parse_room_target(value, lang)
@@ -511,7 +511,7 @@ def set_room_target(cfg, c, value, who, lang="sk"):
     now = int(time.time())
     dry = is_dry(cfg)
     hl = i18n.home_lang(cfg)
-    reason = tr("srv.run.web_change", hl, who=who)
+    reason = reason or tr("srv.run.web_change", hl, who=who)   # utlm.py posiela krátky dôvod „utlm“ / „prec“
     err = None
     try:
         esp_set_number(cfg, ROOM_TARGET_ENT, "%g" % v)
@@ -2059,6 +2059,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(lambda: tarifa.tick(cfg, c, now))
     safe(lambda: suhrn_run(cfg, c, now))
     safe(lambda: abtest.tick(cfg, c, now))
+    safe(lambda: utlm.tick(cfg, c, now))
     if now - wd.get("last_eval", 0) >= 600:
         wd["last_eval"] = now
         safe(lambda: interventions.evaluate_due(cfg, c, now))
