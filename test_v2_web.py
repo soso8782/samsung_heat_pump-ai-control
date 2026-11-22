@@ -363,6 +363,99 @@ class Nesulad(Tmp):
             self.assertIn("Spálňa", app.tr("srv.prompt.riad_nesulad", lang, esp="Spálňa", profil="Salón"))
 
 
+class PorovnanieRiadiacich(Tmp):
+    """Porovnanie riadiacich čidiel: rozdelenie na úseky, preskočenie krátkych, agregácia podľa možnosti, tvar API."""
+    T0 = 1_700_000_000 // 3600 * 3600
+    ENT = app.RIADIACA_ENT
+
+    def setUp(self):
+        super().setUp()
+        import porovnanie, common
+        self.por, self.S = porovnanie, common.S
+        porovnanie._cache.clear()
+        self.tc = sqlite3.connect(self.cfg["TC_DB"])
+        self.tc.executescript("CREATE TABLE events(ts INTEGER, kind TEXT, entity TEXT, old TEXT, new TEXT, text TEXT);"
+                              "CREATE TABLE samples(ts INTEGER, entity TEXT, value REAL);"
+                              "CREATE TABLE notes(ts INTEGER, author TEXT, title TEXT, body TEXT);")
+        self.c = adb(self.cfg)
+
+    def tearDown(self):
+        self.tc.close(); self.c.close()
+        super().tearDown()
+
+    def ev(self, h, old, new):
+        self.tc.execute("INSERT INTO events VALUES(?,?,?,?,?,NULL)", (self.T0 + h * 3600, "ovladanie", self.ENT, old, new))
+
+    def hour(self, h, det, jed, ciel=21.5, vonku=5.0):
+        ts = self.T0 + h * 3600 + 1800
+        for k, v in (("detska", det), ("jedalen", jed), ("ciel", ciel), ("vonku", vonku)):
+            self.tc.execute("INSERT INTO samples VALUES(?,?,?)", (ts, self.S[k], v))
+
+    def data(self):
+        A, B = "Detská (Zigbee)", "Jedáleň"
+        self.ev(60, A, B); self.ev(68, B, A); self.ev(100, A, B)   # B 60-68 (8 h), A 68-100 (32 h), B 100-104 (4 h = krátky úsek)
+        for h in range(0, 60):
+            self.hour(h, 21.0, 22.0, vonku=20.0 if h == 40 else 5.0)   # hodina 40: teplo (>= 18 °C) = kúrenie vypnuté, nepočíta sa
+        for h in range(60, 68):
+            self.hour(h, 21.0, 24.0)
+        for h in range(68, 100):
+            self.hour(h, 21.0, 22.0)
+        for h in range(100, 104):
+            self.hour(h, 21.0, 30.0)
+        self.tc.commit()
+        return self.T0, self.T0 + 104 * 3600
+
+    def test_split_periods(self):
+        z = [{"ts": 100 * 3600, "novy": "B"}, {"ts": 103 * 3600, "novy": "A"}, {"ts": 120 * 3600, "novy": "B"}]
+        r = self.por.split_periods("A", z, 0, 130 * 3600)
+        self.assertEqual(r, [(0, 100 * 3600, "A"), (103 * 3600, 120 * 3600, "A"), (120 * 3600, 130 * 3600, "B")])   # úsek 100–103 (3 h) vypadol
+        self.assertEqual(self.por.split_periods(None, [], 0, 100 * 3600), [])   # neznáma počiatočná možnosť = nič
+        self.assertEqual(self.por.split_periods("A", [], 0, 5 * 3600), [])      # pod 6 h
+        # zmena pred začiatkom rozsahu určí možnosť
+        self.assertEqual(self.por.split_periods("A", [{"ts": -5, "novy": "B"}], 0, 7 * 3600), [(0, 7 * 3600, "B")])
+
+    def test_agregacia_a_preskocenie(self):
+        a, b = self.data()
+        cycles = [{"ts_start": a + h * 3600 + 60, "minutes": m, "mode": md} for h, m, md in
+                  ((70, 5, "kurenie"), (75, 30, "kurenie"), (80, 8, "zmiesane"), (90, 40, "kurenie"), (91, 3, "tuv"), (101, 4, "kurenie"))]
+        # cykly v úseku „Jedáleň“ 60–68 a v krátkom úseku 100–104 sa musia započítať len tam, kde patria
+        cycles += [{"ts_start": a + 65 * 3600, "minutes": 20, "mode": "kurenie"}]
+        with mock.patch("stats.compute_cycles", return_value=[c for c in cycles if c["mode"] != "tuv"]), \
+             mock.patch.object(self.por, "_energia", return_value={self.T0 // 3600 + h: (1.0, 3.0) for h in range(0, 110)}):
+            r = self.por.compute(self.cfg, a, b, now=b)
+        self.assertEqual(set(r), {"od", "do", "moznosti", "poznamka"})
+        m = {x["moznost"]: x for x in r["moznosti"]}
+        self.assertEqual(set(m), {"Detská (Zigbee)", "Jedáleň"})   # krátky úsek 100–104 sa nepočíta
+        d, j = m["Detská (Zigbee)"], m["Jedáleň"]
+        self.assertEqual((d["kluc"], d["cidlo"], j["kluc"], j["cidlo"]), ("detska", "Zigbee", "jedalen", ""))
+        self.assertEqual(d["hodin"], 59 + 32)           # 0–60 bez teplej hodiny 40 + 68–100
+        self.assertEqual(j["hodin"], 8)
+        self.assertEqual((d["rozptyl"], j["rozptyl"]), (1.0, 3.0))
+        self.assertEqual((d["odchylka"], j["odchylka"]), (0.5, 2.5))
+        self.assertEqual((d["starty_h"], d["kratke"]), (round(4 / 91, 2), 2))   # 70 (5 min), 75, 80 (8 min), 90 -> 4 štarty, 2 krátke; TÚV a cykly mimo úsekov nie
+        self.assertEqual((j["starty_h"], j["kratke"]), (round(1 / 8, 2), 0))
+        self.assertEqual((d["kwh_den"], d["cop"], d["vonku"]), (24.0, 3.0, 5.0))
+        self.assertEqual([x["moznost"] for x in r["moznosti"]], ["Detská (Zigbee)", "Jedáleň"])   # zoradené podľa rozptylu
+
+    def test_prazdne_a_bez_db(self):
+        r = self.por.compute(dict(self.cfg, TC_DB="/nonexistent/tc.db"), 0, 100 * 3600)
+        self.assertEqual(r["moznosti"], [])
+
+    def test_cache(self):
+        with mock.patch.object(self.por, "compute", return_value={"od": 1, "do": 2, "moznosti": [], "poznamka": ""}) as cm:
+            self.por.get(self.cfg, 30, now=1000); self.por.get(self.cfg, 30, now=1300)
+            self.assertEqual(cm.call_count, 1)
+            self.por.get(self.cfg, 30, now=1700)
+            self.assertEqual(cm.call_count, 2)
+
+    def test_agent_riadok_len_s_dostatkom_dat(self):
+        mk = lambda *h: {"od": 0, "do": 1, "poznamka": "", "moznosti": [{"moznost": "X%d" % i, "hodin": x, "rozptyl": 1.0 + i} for i, x in enumerate(h)]}
+        with mock.patch.object(self.por, "get", return_value=mk(100, 30)):
+            self.assertIsNone(self.por.agent_line(self.cfg))
+        with mock.patch.object(self.por, "get", return_value=mk(100, 60)):
+            self.assertIn("X0", self.por.agent_line(self.cfg))
+
+
 class Http(Tmp):
     def setUp(self):
         super().setUp()
@@ -403,6 +496,15 @@ class Http(Tmp):
         self.assertEqual(self.req("POST", "/api/profil", self.admin, {"profil": {}}, hdr=False)[0], 403)   # bez X-Kurenie
         s, o = self.req("POST", "/api/restart", self.admin, {}); self.assertEqual(s, 200)
         s, o = self.req("POST", "/api/profil/predvoleny", self.admin, {}); self.assertEqual(s, 200); self.assertFalse(os.path.exists(self.pf))
+
+    def test_porovnanie_api(self):
+        import porovnanie
+        porovnanie._cache.clear()
+        self.assertEqual(self.req("GET", "/api/riadiaca/porovnanie", self.user)[0], 403)
+        self.assertEqual(self.req("GET", "/api/riadiaca/porovnanie", None)[0], 401)
+        s, o = self.req("GET", "/api/riadiaca/porovnanie?days=7", self.admin)
+        self.assertEqual(s, 200); self.assertEqual(set(o), {"od", "do", "moznosti", "poznamka"})
+        self.assertEqual(o["do"] - o["od"], 7 * 86400); self.assertEqual(o["moznosti"], []); self.assertTrue(o["poznamka"])
 
     def test_user_status_has_profil_info(self):
         s, o = self.req("GET", "/api/status", self.user)
