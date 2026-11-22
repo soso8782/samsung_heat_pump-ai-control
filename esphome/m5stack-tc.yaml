@@ -1,10 +1,22 @@
 # Overená konfigurácia ESPHome mosta (M5Stack Atom + RS485 na NASA zbernici) z referenčnej inštalácie
 # Samsung EHS Split AE120JXEDGH + hydrobox AE160JNYDGH (gen. J, 2018). Názvy entít zodpovedajú predvolenému profilu.
-# Heslá a kľúče sú v secrets.yaml (!secret), entity Home Assistant (izbové senzory) si prepíšte na svoje.
+# Heslá a kľúče sú v secrets.yaml (!secret), entity Home Assistant a IP sú v substitúciách (prepis v lokálnom obale, súbor needitujte).
 
 substitutions:
   # verzia firmvéru: web ju porovná s FW_MIN v app.py; pri zmene konfigurácie, ktorú web potrebuje, ju zvýš
   fw_verzia: "2.12.0"
+  # --- Nastavenia inštalácie: tento súbor needitujte, hodnoty prepíšte v lokálnom obale
+  # m5stack-tc.local.yaml (vzor: m5stack-tc.local.example.yaml). Tu sú predvolené hodnoty.
+  esp_ip: 192.168.1.199   # IP adresa ESP vo vašej sieti (ESP_URL v config.env)
+  ha_izba_jedalen: sensor.0x00124b0029114db8_temperature
+  ha_radiator_jedalen: sensor.jedalen_radiator_local_temperature
+  ha_izba_obyvacka: sensor.obyvacka_t_h_cidlo_temperature
+  ha_izba_detska_zigbee: sensor.detska_t_h_temperature
+  ha_izba_kupelna: sensor.kupelna_t_h_temperature
+  ha_izba_spalna: sensor.spalna_t_h_cidlo_2_kruhovy_temperature
+  ha_izba_pracovna: sensor.pracovna_t_h_cidlo_temperature
+  ha_izba_kuchyna: sensor.t_h_kuchyna_temperature
+  ha_detska_espresense: sensor.detska_izba_espresense_detska_izba_detska_izba_teplota
 
 esphome:
   name: m5stack-tc
@@ -67,7 +79,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  use_address: 192.168.1.199   # IP adresa ESP vo vašej sieti (ESP_URL v config.env)
+  use_address: ${esp_ip}   # IP adresa ESP vo vašej sieti (ESP_URL v config.env)
   # Záchranný hotspot: ak sa ESP 1 minútu nevie pripojiť na Wi-Fi, spustí vlastnú sieť.
   # Pripojte sa naň mobilom a na http://192.168.4.1 zadajte novú Wi-Fi (captive portal).
   ap:
@@ -1240,7 +1252,7 @@ sensor:
   # Pôvodne: sensor.detska_radiator_local_temperature, potom sensor.espresense_detska_izba_ahtx0_temperature
   - platform: homeassistant
     id: detska_teplota
-    entity_id: sensor.detska_izba_espresense_detska_izba_detska_izba_teplota
+    entity_id: ${ha_detska_espresense}
     internal: true
     on_value:
       then:
@@ -1251,7 +1263,7 @@ sensor:
   - platform: homeassistant
     id: izba_jedalen
     name: "Izba Jedáleň"
-    entity_id: sensor.0x00124b0029114db8_temperature
+    entity_id: ${ha_izba_jedalen}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1263,7 +1275,7 @@ sensor:
   - platform: homeassistant
     id: izba_jedalen_hlavica
     name: "Radiátor Jedáleň (hlavica)"
-    entity_id: sensor.jedalen_radiator_local_temperature
+    entity_id: ${ha_radiator_jedalen}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1275,7 +1287,7 @@ sensor:
   - platform: homeassistant
     id: izba_obyvacka
     name: "Izba Obývačka"
-    entity_id: sensor.obyvacka_t_h_cidlo_temperature
+    entity_id: ${ha_izba_obyvacka}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1287,7 +1299,7 @@ sensor:
   - platform: homeassistant
     id: izba_detska_zigbee
     name: "Izba Detská (Zigbee)"
-    entity_id: sensor.detska_t_h_temperature
+    entity_id: ${ha_izba_detska_zigbee}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1299,7 +1311,7 @@ sensor:
   - platform: homeassistant
     id: izba_kupelna
     name: "Izba Kúpeľňa"
-    entity_id: sensor.kupelna_t_h_temperature
+    entity_id: ${ha_izba_kupelna}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1311,7 +1323,7 @@ sensor:
   - platform: homeassistant
     id: izba_spalna
     name: "Izba Spálňa"
-    entity_id: sensor.spalna_t_h_cidlo_2_kruhovy_temperature
+    entity_id: ${ha_izba_spalna}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1323,7 +1335,7 @@ sensor:
   - platform: homeassistant
     id: izba_pracovna
     name: "Izba Pracovňa"
-    entity_id: sensor.pracovna_t_h_cidlo_temperature
+    entity_id: ${ha_izba_pracovna}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
@@ -1335,7 +1347,7 @@ sensor:
   - platform: homeassistant
     id: izba_kuchyna
     name: "Izba Kuchyňa"
-    entity_id: sensor.t_h_kuchyna_temperature
+    entity_id: ${ha_izba_kuchyna}
     unit_of_measurement: "°C"
     device_class: temperature
     accuracy_decimals: 1
