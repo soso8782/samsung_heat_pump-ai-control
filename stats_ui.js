@@ -13,7 +13,7 @@ const fnumL = (x, n) => typeof window.fnum === "function" ? window.fnum(x, n) : 
 
 const ROOT_ID = "tab-statistiky";
 const SKEY = "kurenie-stats-v1";
-const VIEWS = ["den", "porovnanie", "obdobie", "poruchy"];
+const VIEWS = ["den", "porovnanie", "obdobie", "poruchy", "zdravie"];
 const GROUP_KEYS = ["vonku", "izby", "voda", "tuv", "kompresor", "energia", "ucinnost", "kvalita"];
 const grpName = g => GROUP_KEYS.includes(g) ? t("stats.skupina." + g) : g;
 /* názvy z číselníkov: známy kľúč sa prekladá, neznámy (z API) ostáva ako je */
@@ -135,8 +135,8 @@ function loadState() {
 }
 
 /* ---------- dáta ---------- */
-const D = {meta: null, metrics: null, day: null, cmp: null, quick: null, quickBase: null, rng: null, rngPrev: null, rngPrevErr: false, flt: null, codes: null, at: {}, key: {}};
-const seq = {den: 0, porovnanie: 0, obdobie: 0, poruchy: 0, quick: 0, meta: 0};
+const D = {meta: null, metrics: null, day: null, cmp: null, quick: null, quickBase: null, rng: null, rngPrev: null, rngPrevErr: false, flt: null, zdr: null, codes: null, at: {}, key: {}};
+const seq = {den: 0, porovnanie: 0, obdobie: 0, poruchy: 0, zdravie: 0, quick: 0, meta: 0};
 let built = false, visible = false, root = null, tipEl = null;
 
 async function localApi(path, body) {
@@ -347,7 +347,7 @@ function exportUrl() {
 function updateExport() {
   const a = gid("st-export"); if (!a) return;
   const u = exportUrl();
-  a.hidden = S.view === "poruchy";
+  a.hidden = S.view === "poruchy" || S.view === "zdravie";
   if (u) { a.href = u; a.removeAttribute("aria-disabled"); a.title = t("stats.export.stiahnut"); } else { a.removeAttribute("href"); a.setAttribute("aria-disabled", "true"); a.title = t("stats.export.najprv_obdobie"); }
 }
 
@@ -767,6 +767,56 @@ async function loadFlt() {
   D.at.poruchy = Date.now(); D.key.poruchy = fltKey(); setMsg("st-flt-msg", "");
   renderFlt();
 }
+/* ---------- zdravie čerpadla (/api/zdravie, len správca) ---------- */
+const ZST = {ok: "stav_ok", warn: "stav_warn", crit: "stav_crit", nodata: "stav_nodata"};
+function zSpark(tr) {
+  const v = arr(tr).map(x => num(x)), W = 120, H = 28, ok = v.filter(x => x !== null);
+  if (ok.length < 2) return "";
+  const mx = Math.max(10, ...ok.map(Math.abs)), n = v.length;
+  const X = i => 2 + i * (W - 4) / Math.max(1, n - 1), Y = x => H / 2 - x / mx * (H / 2 - 3);
+  let d = "", pen = false;
+  v.forEach((x, i) => { if (x === null) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + " " + Y(x).toFixed(1); pen = true; });
+  const txt = t("stats.zdravie.trend_aria", {v: v.map(x => x === null ? "–" : f(x, 0) + " %").join(", ")});
+  return `<svg class="zd-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(txt)}"><line x1="0" x2="${W}" y1="${H / 2}" y2="${H / 2}" stroke="currentColor" stroke-opacity=".25" stroke-dasharray="3 3"/><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
+}
+function zInd(i) {
+  const st = ZST[i.stav] ? i.stav : "nodata";
+  const kod = i.kod;
+  let det = "";
+  if (kod === "odmrazovanie" && (num(i.pocet_zmena) !== null || num(i.trvanie_zmena) !== null)) det = t("stats.zdravie.odmraz_detail", {p: f(i.pocet_zmena, 0), d: f(i.trvanie_zmena, 0)});
+  else if (kod === "cyklovanie" && num(i.kratke_nedavne) !== null) det = t("stats.zdravie.kratke_detail", {a: f(i.kratke_nedavne, 0), b: f(i.kratke_zaklad, 0)});
+  else if (num(i.nedavne) !== null) det = t("stats.zdravie.hodnoty", {a: f(i.nedavne, 2), b: f(i.zaklad, 2)});
+  return `<div class="zd-row zd-${st}"><span class="zd-led" aria-hidden="true"></span><div class="zd-main"><div class="zd-h"><b>${esc(i.nazov)}</b> <span class="st-badge">${t("stats.zdravie." + ZST[st])}</span></div>` +
+    `<div class="mut">${esc(i.popis)}</div>` +
+    `<div class="zd-v">${num(i.zmena_pct) !== null ? t("stats.zdravie.zmena", {v: (i.zmena_pct > 0 ? "+" : "") + f(i.zmena_pct, 0)}) + " · " : ""}${t("stats.zdravie.prah", {v: f(i.prah_pct, 0)})}${det ? " · " + esc(det) : ""}</div></div>` +
+    `<div class="zd-tr" title="${esc(t("stats.zdravie.trend_zaklad"))}">${zSpark(i.trend)}</div></div>`;
+}
+const zDate = ts => { const n = num(ts); return n === null ? "–" : dstr(new Date(n * 1000)); };
+function zFind(n) { return `<li><b>${esc(n.nazov)}</b> – ${esc(n.text)} <span class="mut">${zDate(n.od)}${n.do ? " · " + t("stats.zdravie.zrusene", {d: zDate(n.do)}) : ""}</span></li>`; }
+function renderZdravie() {
+  const z = D.zdr, box = gid("st-zd-body"); if (!box) return;
+  if (!isObj(z)) { box.innerHTML = ""; return; }
+  if (z.enabled === false) { box.innerHTML = nodata(t("stats.zdravie.vypnute")); return; }
+  const o = isObj(z.okno) ? z.okno : {}, ne = arr(o.nedavne), za = arr(o.zaklad);
+  let h = `<div class="st-msg">${t("stats.zdravie.okno", {od: ne[0] || "–", do: ne[1] || "–", zod: za[0] || "–", zdo: za[1] || "–", n: o.zaklad_dni || 0})}</div>`;
+  if (z.dost_dat === false) h += nodata(t("stats.zdravie.malo_dat", {n: o.zaklad_dni || 0, min: o.zaklad_min_dni || 21}));
+  h += `<div class="zd-list">` + arr(z.indikatory).filter(isObj).map(zInd).join("") + `</div>`;
+  const ch = isObj(z.chyby) ? arr(z.chyby.kody) : [];
+  h += `<p class="st-h3" style="margin-top:20px">${t("stats.zdravie.chyby")}</p>` + (ch.length ? `<div>${ch.map(x => `<span class="tag">${esc(t("stats.zdravie.chyby_pocet", {kod: x.kod, n: x.pocet}))}</span> `).join("")}</div>` : `<div class="mut">${t("stats.zdravie.ziadne_chyby")}</div>`);
+  const nz = isObj(z.nalezy) ? z.nalezy : {}, ak = arr(nz.aktivne), hi = arr(nz.historia);
+  h += `<p class="st-h3" style="margin-top:20px">${t("stats.zdravie.nalezy")}</p><p class="mut" style="margin:0">${t("stats.zdravie.aktivne")}</p>` + (ak.length ? `<ul class="zd-find">${ak.map(zFind).join("")}</ul>` : `<div class="mut">${t("stats.zdravie.ziadne_nalezy")}</div>`);
+  if (hi.length) h += `<p class="mut" style="margin:10px 0 0">${t("stats.zdravie.historia")}</p><ul class="zd-find">${hi.map(zFind).join("")}</ul>`;
+  box.innerHTML = h;
+}
+async function loadZdravie() {
+  const my = ++seq.zdravie;
+  setMsg("st-zd-msg", t("stats.spolocne.nacitavam"));
+  const r = await call("api/zdravie");
+  if (my !== seq.zdravie) return;
+  if (r.error) { D.zdr = null; D.at.zdravie = 0; setMsg("st-zd-msg", t("stats.zdravie.chyba", {e: r.error}), "err"); gid("st-zd-body").innerHTML = ""; return; }
+  D.zdr = r; D.at.zdravie = Date.now(); D.key.zdravie = "z"; setMsg("st-zd-msg", "");
+  renderZdravie();
+}
 function renderCodes() {
   const box = gid("st-codes-list"), dl = gid("st-codelist"); if (!box) return;
   if (D.codes === false) { box.innerHTML = `<div class="st-msg err">${t("stats.kody.chyba")}</div>`; return; }
@@ -871,6 +921,7 @@ function loadView(v, force) {
     if (D.quickBase !== S.cmp[0] || D.quick === false) loadQuick(); else renderCmpControls();
     if (D.cmp && fresh(S.cmp.join(","))) renderCmp(); else loadCmp();
   } else if (v === "obdobie") { if (D.rng && fresh(rngKey())) renderRng(); else loadRng(); }
+  else if (v === "zdravie") { if (D.zdr && fresh("z")) renderZdravie(); else loadZdravie(); }
   else if (v === "poruchy") { if (D.codes === null) loadCodes(); else renderCodes(); if (D.flt && fresh(fltKey())) renderFlt(); else loadFlt(); }
 }
 function setView(v, noLoad) {
@@ -992,6 +1043,13 @@ function build() {
   </section>
   <section class="panel pad" id="st-rng-p2"><div id="st-rng-chart"></div></section>
   <section class="panel pad" id="st-rng-p3"><div class="st-sub"><h2>${t("stats.obdobie.tabulka")}</h2></div><div id="st-rng-table"></div></section>
+</div>
+<div class="st-view" id="st-v-zdravie" hidden>
+  <section class="panel pad">
+    <div class="st-sub"><h2>${t("stats.zdravie.titul")}</h2><span class="sub">${t("stats.zdravie.podtitul")}</span></div>
+    <div class="st-msg" id="st-zd-msg" role="status"></div>
+    <div id="st-zd-body"></div>
+  </section>
 </div>
 <div class="st-view" id="st-v-poruchy" hidden>
   <section class="panel pad">

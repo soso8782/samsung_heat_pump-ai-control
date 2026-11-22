@@ -12,7 +12,7 @@ import datetime, json, re, socket, sqlite3, threading, time, traceback, urllib.e
 import profil
 from common import (P, REF_NAME, REF_ROOM, ROOM_NAMES, ROOMS, S, SETTINGS, TARGET_ROOMS, adb, balance, cfg_int, day_bounds, day_summary,
                     dhw_intervals, get_state, get_targets, hour_stats, is_dry, load_cfg, local_midnight, set_state, tcq)
-import abtest, contacts, dhw, interventions, notify, temps
+import abtest, contacts, dhw, interventions, notify, temps, zdravie
 import i18n
 from i18n import tr
 
@@ -1068,10 +1068,14 @@ def build_input(cfg, c, now, reasons=None, pre=None):
     except Exception:
         traceback.print_exc()
         temps_txt = None
+    try:
+        zdr = zdravie.active_texts(cfg, ml)
+    except Exception:
+        zdr = []
     text = "\n".join(head + [
         _p("now", ml) + time.strftime("%A %d.%m.%Y %H:%M", time.localtime(now)),
         _p("data_age", ml, n=int(now) - last_sample),
-    ] + (["", ab] if ab else []) + (["", okna_txt] if okna_txt else []) + (["", temps_txt] if temps_txt else []) + [
+    ] + (["", ab] if ab else []) + (["", okna_txt] if okna_txt else []) + (["", temps_txt] if temps_txt else []) + (["", _p("h_zdravie", ml)] + ["- " + x for x in zdr] if zdr else []) + [
         "", _p("h_state", ml),
         "\n".join("- %s: %s" % (k, v) for k, v in cur.items()),
         "", _p("h_24h", ml),
@@ -1688,6 +1692,7 @@ def suhrn_data(cfg, c, tyzden, now=None):
     except ValueError:
         d["poplachy"] = []
     d["porovnanie"] = suhrn_porovnanie(cfg, ml, now)
+    d["zdravie"] = zdravie.active_texts(cfg, ml)
     return d
 
 
@@ -1750,6 +1755,8 @@ def suhrn_text(d, lang="sk"):
     if d.get("prepnutia_riadiacej") is not None:
         out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
     out.extend((d.get("porovnanie") or {}).get("riadky") or [])
+    if d.get("zdravie"):
+        out.append(tr("srv.suhrn.zdravie", lang, v=" ".join(d["zdravie"])))
     out.append(tr("srv.suhrn.poplachy", lang, v="; ".join(d["poplachy"]) if d.get("poplachy") else tr("srv.suhrn.ziadne", lang)))
     return "\n".join(out)
 
@@ -2039,6 +2046,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))
+    safe(lambda: zdravie.tick(cfg, c, now, notify_))
     safe(lambda: suhrn_run(cfg, c, now))
     safe(lambda: abtest.tick(cfg, c, now))
     if now - wd.get("last_eval", 0) >= 600:
