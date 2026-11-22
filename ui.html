@@ -783,6 +783,10 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
       <div class="stats" id="spstats"><div class="empty" style="padding-top:16px" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
       <p class="sub" id="spnote" style="font-size:12.5px;margin:12px 0 0"></p>
     </section>
+    <section class="panel pad" id="spodhad" hidden>
+      <div class="head"><h2 data-i18n="spotreba.odhad_titul">Odhad nákladov</h2></div>
+      <div id="spodhadbody"></div>
+    </section>
     <section class="panel pad" id="spchartbox" hidden>
       <div class="head"><h2 data-i18n="spotreba.po_dnoch">Po dňoch</h2><div class="legend" id="splegend"></div></div>
       <div class="chart" id="spchart" style="margin-top:0"></div>
@@ -1472,7 +1476,23 @@ $("#spseg").onclick = e => {
   } else spMode = p;
   spSave(); loadSpotreba().catch(() => {});
 };
+/* odhad nákladov (naklady.py): zvyšok mesiaca, fakturačné obdobie a vykurovacia sezóna */
+async function loadOdhad() {
+  let d; try { d = await api("api/naklady/odhad"); } catch (e) { return; }
+  const box = $("#spodhad"), body = $("#spodhadbody");
+  if (!d || d.error) { box.hidden = true; return; }
+  box.hidden = false;
+  if (!d.dost_dat) { body.innerHTML = `<p class="sub" style="margin:0">${esc(d.text || t("spotreba.odhad_malo"))}</p>`; return; }
+  const ln = (key, p) => `<p style="margin:6px 0">${t(key, {kwh: f(p.zvysok_kwh, 0), eur: f(p.zvysok_eur, 0), pm: f(p.pm_eur, 0), do: spDm(p.do)})}</p>`;
+  let h = ln("spotreba.odhad_mesiac", d.mesiac) + `<p class="sub" style="margin:0 0 6px">${t("spotreba.odhad_mesiac_spolu", {kwh: f(d.mesiac.spolu_kwh, 0), eur: f(d.mesiac.spolu_eur, 0)})}</p>`;
+  h += d.sezona.mimo_sezony ? `<p style="margin:6px 0">${t("spotreba.odhad_mimo", {od: spDm(d.sezona.dalsia_od)})}</p>` : ln("spotreba.odhad_sezona", d.sezona);
+  h += ln("spotreba.odhad_obdobie", d.fakturacne_obdobie);
+  const m = d.model;
+  h += `<p class="sub" style="font-size:12.5px;margin:10px 0 0">${t("spotreba.odhad_nota", {a: f(m.a_kwh_den, 1), b: f(m.b_kwh_hdd, 2), n: m.dni, base: m.zaklad_c})} ${d.predpoved_dni ? t("spotreba.odhad_pred_ano", {n: d.predpoved_dni}) : t("spotreba.odhad_pred_nie")}</p>`;
+  body.innerHTML = h;
+}
 async function loadSpotreba() {
+  loadOdhad().catch(() => {});
   const my = ++spSeq, [od, spDo] = spRange(); spRenderBar();
   let j; try { j = await api("api/spotreba?" + (od ? "od=" + od + "&" : "") + "do=" + spDo); } catch (e) { if (e.auth) return; j = {error: t("spotreba.chyba_nacitanie")}; }
   if (my !== spSeq) return;   /* medzitým sa zmenilo obdobie */

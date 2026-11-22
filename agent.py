@@ -1688,6 +1688,11 @@ def suhrn_data(cfg, c, tyzden, now=None):
     except ValueError:
         d["poplachy"] = []
     d["porovnanie"] = suhrn_porovnanie(cfg, ml, now)
+    try:    # prehľad skončenej sezóny: iba v prvom súhrne po jej konci
+        import naklady
+        d["sezona"] = naklady.sezona_suhrn(cfg, c, sun, now or time.time(), ml)
+    except Exception:
+        d["sezona"] = None
     return d
 
 
@@ -1750,6 +1755,8 @@ def suhrn_text(d, lang="sk"):
     if d.get("prepnutia_riadiacej") is not None:
         out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
     out.extend((d.get("porovnanie") or {}).get("riadky") or [])
+    if d.get("sezona"):
+        out.append(d["sezona"]["text"])
     out.append(tr("srv.suhrn.poplachy", lang, v="; ".join(d["poplachy"]) if d.get("poplachy") else tr("srv.suhrn.ziadne", lang)))
     return "\n".join(out)
 
@@ -1786,6 +1793,8 @@ def suhrn_run(cfg, c, now=None):
     c.execute("INSERT INTO reports(ts, week_from, week_to, text, cost, kind, data) VALUES(?,?,?,?,?,?,?)",
               (now, d["od"], d["do"], text[:6000], float(cost or 0), "suhrn", json.dumps(d, ensure_ascii=False)))
     c.commit()
+    if d.get("sezona"):
+        set_state(c, "sezona_suhrn", str(d["sezona"]["rok"]))
     set_state(c, "last_suhrn", key)
     try:
         notify.event(cfg, "suhrn", tr("srv.suhrn.titulok", ml, od=d["od"], do=d["do"]), text)

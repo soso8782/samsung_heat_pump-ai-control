@@ -13,7 +13,7 @@ const fnumL = (x, n) => typeof window.fnum === "function" ? window.fnum(x, n) : 
 
 const ROOT_ID = "tab-statistiky";
 const SKEY = "kurenie-stats-v1";
-const VIEWS = ["den", "porovnanie", "obdobie", "poruchy"];
+const VIEWS = ["den", "porovnanie", "obdobie", "sezona", "poruchy"];
 const GROUP_KEYS = ["vonku", "izby", "voda", "tuv", "kompresor", "energia", "ucinnost", "kvalita"];
 const grpName = g => GROUP_KEYS.includes(g) ? t("stats.skupina." + g) : g;
 /* názvy z číselníkov: známy kľúč sa prekladá, neznámy (z API) ostáva ako je */
@@ -136,7 +136,7 @@ function loadState() {
 
 /* ---------- dáta ---------- */
 const D = {meta: null, metrics: null, day: null, cmp: null, quick: null, quickBase: null, rng: null, rngPrev: null, rngPrevErr: false, flt: null, codes: null, at: {}, key: {}};
-const seq = {den: 0, porovnanie: 0, obdobie: 0, poruchy: 0, quick: 0, meta: 0};
+const seq = {den: 0, porovnanie: 0, obdobie: 0, sezona: 0, poruchy: 0, quick: 0, meta: 0};
 let built = false, visible = false, root = null, tipEl = null;
 
 async function localApi(path, body) {
@@ -347,7 +347,7 @@ function exportUrl() {
 function updateExport() {
   const a = gid("st-export"); if (!a) return;
   const u = exportUrl();
-  a.hidden = S.view === "poruchy";
+  a.hidden = S.view === "poruchy" || S.view === "sezona";
   if (u) { a.href = u; a.removeAttribute("aria-disabled"); a.title = t("stats.export.stiahnut"); } else { a.removeAttribute("href"); a.setAttribute("aria-disabled", "true"); a.title = t("stats.export.najprv_obdobie"); }
 }
 
@@ -687,6 +687,35 @@ async function loadRng() {
   setMsg("st-rng-msg", D.rngPrevErr ? t("stats.obdobie.rok_chyba") : "", D.rngPrevErr ? "err" : "");
   renderRng();
 }
+let sezRok = null;
+async function loadSezona() {
+  const my = ++seq.sezona;
+  setMsg("st-sez-msg", t("stats.spolocne.nacitavam"));
+  const r = await call("api/sezona" + (sezRok ? "?rok=" + sezRok : ""));
+  if (my !== seq.sezona) return;
+  if (r.error || !isObj(r.sezona)) { D.sez = null; D.at.sezona = 0; setMsg("st-sez-msg", r.error || t("stats.sezona.chyba"), "err"); gid("st-sez-table").innerHTML = ""; gid("st-sez-ev").hidden = true; return; }
+  D.sez = r; sezRok = r.sezona.rok; D.at.sezona = Date.now(); D.key.sezona = String(sezRok);
+  setMsg("st-sez-msg", "");
+  renderSezona();
+}
+function renderSezona() {
+  const r = D.sez; if (!r) return;
+  const s = r.sezona, p = r.predchadzajuca, por = r.porovnanie;
+  gid("st-sez-info").textContent = t("stats.sezona.sezona") + " " + s.nazov + " · " + fmtD(s.od) + " – " + fmtD(s.do) + (s.prebieha ? " · " + t("stats.sezona.prebieha") : "");
+  const box = gid("st-sez-table"), evb = gid("st-sez-ev");
+  if (!s.ma_data) { box.innerHTML = `<p class="sub">${t("stats.sezona.nema_dat")}</p>`; gid("st-sez-por").textContent = ""; evb.hidden = true; return; }
+  const row = (k, v, pv, d) => `<tr><th class="t">${t("stats.sezona." + k)}</th><td>${f(v, d)}</td>${p ? `<td>${f(pv, d)}</td>` : ""}</tr>`;
+  const pv = x => p ? p[x] : null;
+  let body = row("r_kwh", s.kwh, pv("kwh"), 0) + row("r_teplo", s.teplo_kwh, pv("teplo_kwh"), 0) + row("r_cop", s.cop, pv("cop"), 2) + row("r_cena", s.cena_eur, pv("cena_eur"), 0) +
+    row("r_hdd", s.hdd, pv("hdd"), 0) + row("r_kwh_hdd", s.kwh_hdd, pv("kwh_hdd"), 2) + row("r_vonku", s.vonku, pv("vonku"), 1);
+  for (const x of arr(s.izby)) { const o = p ? arr(p.izby).find(y => y.kluc === x.kluc) : null; body += `<tr><th class="t">${t("stats.sezona.r_izba", {izba: esc(x.nazov)})}</th><td>${f(x.priemer, 1)}</td>${p ? `<td>${f(o ? o.priemer : null, 1)}</td>` : ""}</tr>`; }
+  body += row("r_rozptyl", s.rozptyl, pv("rozptyl"), 2) + row("r_starty", s.starty, pv("starty"), 0) + row("r_odmraz", s.odmraz_min, pv("odmraz_min"), 0) + row("r_dni", s.dni_s_udajmi, pv("dni_s_udajmi"), 0);
+  box.innerHTML = `<div class="st-scroll"><table class="st-tbl"><thead><tr><th class="t">${t("stats.sezona.th_ukazovatel")}</th><th>${esc(s.nazov)}</th>${p ? `<th>${esc(p.nazov)}</th>` : ""}</tr></thead><tbody>${body}</tbody></table></div>`;
+  gid("st-sez-por").textContent = por && por.kwh_hdd_zmena_pct != null ? t("stats.sezona.por_info", {pct: f(por.kwh_hdd_zmena_pct, 1), kwh: f(por.kwh_pri_starej_ucinnosti, 0), u: f(por.uspora_kwh, 0)}) : (p ? "" : t("stats.sezona.bez_predosle"));
+  evb.hidden = false;
+  const ev = arr(r.udalosti);
+  evb.innerHTML = `<div class="st-sub"><h2>${t("stats.sezona.udalosti")}</h2></div>` + (ev.length ? `<ul class="st-ev">` + ev.map(e => `<li><b>${fmtD(e.datum)}</b> · ${esc(t("stats.sezona.druh_" + e.druh))}: ${esc(e.text)}</li>`).join("") + `</ul>` : `<p class="sub">${t("stats.sezona.ziadne_udalosti")}</p>`);
+}
 function renderRng() {
   if (!D.rng) return;
   const rows = arr(D.rng.rows).filter(isObj);
@@ -871,6 +900,7 @@ function loadView(v, force) {
     if (D.quickBase !== S.cmp[0] || D.quick === false) loadQuick(); else renderCmpControls();
     if (D.cmp && fresh(S.cmp.join(","))) renderCmp(); else loadCmp();
   } else if (v === "obdobie") { if (D.rng && fresh(rngKey())) renderRng(); else loadRng(); }
+  else if (v === "sezona") { if (D.sez && fresh(String(sezRok))) renderSezona(); else loadSezona(); }
   else if (v === "poruchy") { if (D.codes === null) loadCodes(); else renderCodes(); if (D.flt && fresh(fltKey())) renderFlt(); else loadFlt(); }
 }
 function setView(v, noLoad) {
@@ -904,6 +934,8 @@ function onClick(e) {
     saveState(); syncControls(); loadRng(); }
   else if (a === "rng-grp") { S.rngGroup = b.dataset.g; saveState(); syncControls(); loadRng(); }
   else if (a === "flt-mode") { S.fltMode = b.dataset.m; saveState(); syncControls(); loadFlt(); }
+  else if (a === "sez-prev") { sezRok = (D.sez ? D.sez.sezona.rok : new Date().getFullYear()) - 1; loadSezona(); }
+  else if (a === "sez-next") { sezRok = (D.sez ? D.sez.sezona.rok : new Date().getFullYear()) + 1; loadSezona(); }
   else if (a === "fault-ask") faultAsk(b);
   else if (a === "fault-no") faultNo(b);
   else if (a === "fault-yes") faultYes(b);
@@ -992,6 +1024,16 @@ function build() {
   </section>
   <section class="panel pad" id="st-rng-p2"><div id="st-rng-chart"></div></section>
   <section class="panel pad" id="st-rng-p3"><div class="st-sub"><h2>${t("stats.obdobie.tabulka")}</h2></div><div id="st-rng-table"></div></section>
+</div>
+<div class="st-view" id="st-v-sezona" hidden>
+  <section class="panel pad">
+    <div class="st-sub"><h2>${t("stats.sezona.titul")}</h2><span class="sub" id="st-sez-info"></span></div>
+    <div class="st-ctl"><button type="button" class="btn" data-act="sez-prev" aria-label="${t("stats.sezona.predosla_sezona")}">◀</button><button type="button" class="btn" data-act="sez-next" aria-label="${t("stats.sezona.nasledujuca_sezona")}">▶</button></div>
+    <div class="st-msg" id="st-sez-msg" role="status" style="margin-top:10px"></div>
+    <div id="st-sez-table" style="margin-top:8px"></div>
+    <p class="sub" id="st-sez-por" style="margin:12px 0 0"></p>
+  </section>
+  <section class="panel pad" id="st-sez-ev"></section>
 </div>
 <div class="st-view" id="st-v-poruchy" hidden>
   <section class="panel pad">
