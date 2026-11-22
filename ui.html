@@ -704,6 +704,7 @@ body.role-user #pushpanel .pushbox{margin-top:10px}
     <div class="head"><h2 data-i18n="nav.izby">Izby</h2><span class="sub" id="roomsub" data-i18n="prehlad.izby_sub">Aktuálna teplota a rozdiel oproti cieľu</span></div>
     <div class="rooms" id="rooms" aria-live="polite"><div class="empty" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
     <div id="riadsel"></div>
+    <div id="riadwarn"></div>
     <div id="roomtarget"></div>
     <div class="sub usr" id="userlast" style="margin-top:14px" hidden></div>
   </section>
@@ -2068,8 +2069,37 @@ function renderRooms(s) {
       (win ? `<span title="${esc(t("prehlad.otvorene_okno"))}" aria-label="${esc(t("prehlad.otvorene_okno"))}" role="img">${WIN_SVG}</span>` : "") +
       (v != null ? `<span class="rt">${f(v)}<small class="mut" style="font-size:.6em"> °C</small></span><span class="rd" title="${esc(t("prehlad.rozdiel_cielu"))}">${diff}</span>` : `<span class="rt na">${t("spolocne.bez_udaja")}</span><span class="rd"></span>`) + `</div>`; }).join("");
   renderRiad(s);
+  renderRiadWarn(s);
   renderRoomTarget(s);
 }
+/* správca: firmvér ESP (verzia / hint „starší“) a nesúlad riadiacej izby v ESP s referenčnou izbou v profile */
+let riadWarnHtml = "";
+function renderRiadWarn(s) {
+  const box = $("#riadwarn"); if (!box) return;
+  let html = "";
+  if (!isUser()) {
+    const fw = s.firmver || {}, ns = s.riadiaca && s.riadiaca.nesulad, nm = k => (RN[k] != null ? RN[k] : k);
+    if (fw.hint) html += `<p class="sub" role="status" style="margin-top:10px;color:var(--crit-ink)">${esc(t("prehlad.fw_starsi"))}</p>`;
+    if (ns) html += `<div class="riadsel"><b style="color:var(--crit-ink)">${esc(t("prehlad.riad_nesulad", {esp: nm(ns.esp_izba), profil: nm(ns.profil_izba)}))}</b>` +
+      `<div class="btnrow"><button type="button" class="btn sm primary" data-rz="1"${riad.busy ? " disabled" : ""}>${esc(t("prehlad.riad_zosuladit"))}</button></div></div>`;
+    if (fw.verzia) html += `<p class="sub" style="margin-top:10px">${esc(t("prehlad.fw_verzia", {v: fw.verzia}))}</p>`;
+  }
+  if (html === riadWarnHtml) return; riadWarnHtml = html; box.innerHTML = html;
+}
+$("#riadwarn").addEventListener("click", async e => {
+  if (!e.target.closest("[data-rz]") || riad.busy) return;
+  const s = statusData || {}, ns = s.riadiaca && s.riadiaca.nesulad; if (!ns) return;
+  const o = (s.riadiaca.moznosti || []).find(x => x.moznost === s.riadiaca.stav); if (!o) return;
+  if (!window.confirm(t("prehlad.riad_zosuladit_potvrd", {room: RN[ns.esp_izba] != null ? RN[ns.esp_izba] : ns.esp_izba}))) return;
+  riad.busy = true; riad.msg = {t: t("spolocne.ukladam"), ok: true}; renderRooms(s);
+  try { const r = await api("api/riadiaca", {moznost: o.moznost});
+    if (r.error) riad.msg = {t: r.error, ok: false};
+    else { riad.msg = {t: t("prehlad.riad_zosuladene", {room: RN[ns.esp_izba] != null ? RN[ns.esp_izba] : ns.esp_izba}) + (r.note ? " " + r.note : ""), ok: true};
+      if (r.restart) setTimeout(() => location.reload(), 15000);
+      else { try { await loadStatus(); } catch (x) {} setTimeout(() => { riad.msg = null; renderRooms(statusData || {}); }, 8000); } }
+  } catch (err) { if (!err.auth) riad.msg = {t: t("spolocne.server_neodpoveda"), ok: false}; }
+  riad.busy = false; renderRooms(statusData || {});
+});
 /* správca: klik na izbu = výber riadiacej izby (select „Riadiaca izba“ v ESP); izba s viacerými čidlami ponúkne výber čidla.
    Zmena izby prepne referenčnú izbu v profile a reštartuje služby; zmena čidla v tej istej izbe nie. */
 const riad = {open: null, busy: false, msg: null};

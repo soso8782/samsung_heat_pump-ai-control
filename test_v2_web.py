@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Testy webu v2 (úloha B): profil API, sprievodca, profil_info, reštart služieb. Nič sa nepripája na ESP ani HA (všetko mockované)."""
-import http.client, json, os, sys, tempfile, threading, time, unittest
+import http.client, json, os, sys, tempfile, threading, time, unittest, urllib.error
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
@@ -219,6 +219,77 @@ class Riadiaca(Tmp):
         app._agent_mod.esp_set_select.side_effect = lambda cfg, n, o: None
         self.assertEqual(app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "a")[0], 502)
         self.assertEqual(profil.reference_room(), "salon")
+
+
+class Nesulad(Tmp):
+    """Nesúlad selectu „Riadiaca izba“ s referenčnou izbou profilu a verzia firmvéru ESP (HTTP odpovede ESP sú mockované)."""
+    OPTS = ["Salón (ESPresense)", "Salón (Zigbee)", "Kuchyňa", "Spálňa"]
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(profil.save(custom_profile()), [])
+        app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+        app._fw_cache.update(t=0.0, ttl=0, v=None)
+
+    @staticmethod
+    def _resp(d):
+        r = mock.MagicMock(); r.read.return_value = json.dumps(d).encode(); r.__enter__.return_value = r
+        return r
+
+    def _esp(self, stav, fw="2.12.0"):
+        def f(url, timeout=None):
+            u = url if isinstance(url, str) else url.full_url
+            if "/select/" in u:
+                return self._resp({"value": stav, "option": self.OPTS})
+            if "/text_sensor/" in u:
+                if fw is None:
+                    raise urllib.error.HTTPError(u, 404, "nf", {}, None)
+                return self._resp({"value": fw, "state": fw})
+            raise OSError(u)
+        return f
+
+    def test_zhoda_bez_nesuladu(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Salón (Zigbee)")):
+            i = app.riadiaca_info(self.cfg, force=True)
+        self.assertEqual(i["stav"], "Salón (Zigbee)"); self.assertIsNone(i["nesulad"])
+
+    def test_nesulad(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa")):
+            i = app.riadiaca_info(self.cfg, force=True)
+        self.assertEqual(i["nesulad"], {"esp_izba": "spalna", "profil_izba": "salon"})
+
+    def test_zosuladenie_cez_post(self):
+        """POST /api/riadiaca s aktuálnou možnosťou ESP prenesie referenčnú izbu do profilu a reštartuje služby."""
+        self.cfg["DRY_RUN"] = "0"
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa")), \
+                mock.patch.object(app._agent_mod, "esp_set_select"), mock.patch.object(app.time, "sleep"), \
+                mock.patch.object(app, "restart_services", return_value={"ok": True}) as rs:
+            code, out = app.riadiaca_post(self.cfg, {"moznost": "Spálňa"}, "admin@x")
+            self.assertEqual(code, 200, out); self.assertTrue(out["restart"]); rs.assert_called_once()
+            self.assertEqual(profil.reference_room(), "spalna")
+            self.assertIsNone(app.riadiaca_info(self.cfg, force=True)["nesulad"])
+
+    def test_firmver(self):
+        need = app._mm(open(os.path.join(app.ROOT, "VERSION")).read())
+        for fw, stary in (("%d.%d.0" % (need[0], need[1] + 1), False), ("%d.%d.9" % need, False), ("1.0.0", True), (None, True)):
+            app._fw_cache.update(t=0.0, ttl=0, v=None)
+            with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Spálňa", fw)):
+                f = app.firmver_info(self.cfg, {"stav": "x"})
+            self.assertEqual(f["stary"], stary, fw); self.assertEqual(f["hint"], stary); self.assertEqual(f["verzia"], fw)
+
+    def test_firmver_hint_bez_riadiacej_a_nedostupne(self):
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("x", "9.9.9")):
+            self.assertTrue(app.firmver_info(self.cfg, None)["hint"])      # ESP odpovedá, ale select nemá
+        app._fw_cache.update(t=0.0, ttl=0, v=None)
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=OSError("down")):
+            f = app.firmver_info(self.cfg, None)
+        self.assertTrue(f["nedostupne"]); self.assertFalse(f["hint"]); self.assertFalse(f["stary"])
+
+    def test_agent_text_nesuladu(self):
+        ns = app._agent_mod.riadiaca_nesulad("Spálňa", app.riadiaca_mapa(self.OPTS, profil.load()["izby"]))
+        self.assertEqual(ns["esp_izba"], "spalna")
+        for lang in ("sk", "en"):
+            self.assertIn("Spálňa", app.tr("srv.prompt.riad_nesulad", lang, esp="Spálňa", profil="Salón"))
 
 
 class Http(Tmp):

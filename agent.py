@@ -865,6 +865,39 @@ SELECT_OPTIONS = ("Vypnutá", "Posun krivky")   # „Vypínanie kúrenia“ sa n
 RIADIACA_ENT = "Riadiaca izba"   # select v ESP: čidlo, podľa ktorého beží izbová regulácia (mení ho len správca cez web)
 
 
+def riadiaca_mapa(options, izby):
+    """[{moznost, kluc, cidlo}] pre možnosti selectu „Riadiaca izba“, ktoré patria izbe z profilu (najdlhší zhodný názov vyhráva)."""
+    out = []
+    for o in options:
+        best = None
+        for r in izby:
+            n = r.get("nazov") or ""
+            if n and (o == n or o.startswith(n + " (")) and (best is None or len(n) > len(best["nazov"])):
+                best = r
+        if best:
+            out.append({"moznost": o, "kluc": best["kluc"], "cidlo": o[len(best["nazov"]):].strip().strip("()").strip()})
+    return out
+
+
+def esp_select_get(cfg, name, timeout=3):
+    """(stav, možnosti) selectu z REST API ESP; pri chybe vyhodí výnimku."""
+    url = "%s/select/%s?detail=all" % (cfg["ESP_URL"], urllib.parse.quote(name, safe=""))
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    opts = [x for x in (d.get("option") or []) if isinstance(x, str)]
+    stav = d.get("value") if isinstance(d.get("value"), str) else d.get("state")
+    return (stav if isinstance(stav, str) else None), opts
+
+
+def riadiaca_nesulad(stav, moznosti, p=None):
+    """{esp_izba, profil_izba} (kľúče izieb), ak izba zo selectu „Riadiaca izba“ nie je referenčná izba profilu, inak None."""
+    m = next((x for x in moznosti if x["moznost"] == stav), None)
+    ref = profil.reference_room(p)
+    if m and m["kluc"] != ref:
+        return {"esp_izba": m["kluc"], "profil_izba": ref}
+    return None
+
+
 def esp_set_select(cfg, name, option):
     """Jediný zápis do selectu ESP. Povolené LEN „Režim izbovej regulácie“ = „Vypnutá“ / „Posun krivky“ (porovnávací test A/B)
     a „Riadiaca izba“ (voľbu overí volajúci voči možnostiam z ESP), inak ValueError. Pri DRY_RUN nič neodošle, len zaloguje."""
@@ -966,6 +999,15 @@ def build_input(cfg, c, now, reasons=None, pre=None):
     prevl = ["%s: %s" % (time.strftime("%d.%m. %H:%M", time.localtime(t)), (s or "")[:400]) for t, s in prev]
     notes = tcq(cfg, "SELECT ts, title FROM notes ORDER BY ts DESC LIMIT 5")
     notel = ["%s %s" % (time.strftime("%d.%m. %H:%M", time.localtime(t)), ti) for t, ti in notes]
+    try:   # nesúlad: select „Riadiaca izba“ v ESP ukazuje inú izbu než referenčná izba v profile (len informácia, agent nič nemení)
+        p = profil.load()
+        st, ops = esp_select_get(cfg, RIADIACA_ENT)
+        ns = riadiaca_nesulad(st, riadiaca_mapa(ops, p["izby"]), p)
+        if ns:
+            nm = {r["kluc"]: r["nazov"] for r in p["izby"]}
+            notel.insert(0, _p("riad_nesulad", ml, esp=nm.get(ns["esp_izba"], ns["esp_izba"]), profil=nm.get(ns["profil_izba"], ns["profil_izba"])))
+    except Exception:
+        pass
     head = ([_p("why_now", ml) + "; ".join(reasons), ""] if reasons else [])
     try:
         ab = abtest.llm_text(c, now, ml)
