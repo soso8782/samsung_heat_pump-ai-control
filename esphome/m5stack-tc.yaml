@@ -8,7 +8,7 @@ substitutions:
   # --- Nastavenia inštalácie: tento súbor needitujte, hodnoty prepíšte v lokálnom obale
   # m5stack-tc.local.yaml (vzor: m5stack-tc.local.example.yaml). Tu sú predvolené hodnoty.
   esp_ip: 192.168.1.199   # IP adresa ESP vo vašej sieti (ESP_URL v config.env)
-  zalozne_po_min: "30"    # po koľkých minútach bez dát hlavného čidla riadiacej izby sa použije záložné čidlo tej istej izby (0 = vypnuté)
+  zalozne_po_min: "30"    # po koľkých minútach, keď HA hlási hlavné čidlo riadiacej izby ako nedostupné, sa použije záložné čidlo tej istej izby (0 = vypnuté); bez akejkoľvek hodnoty 12 h = výpadok vždy
   ha_izba_jedalen: sensor.0x00124b0029114db8_temperature
   ha_radiator_jedalen: sensor.jedalen_radiator_local_temperature
   ha_izba_obyvacka: sensor.obyvacka_t_h_cidlo_temperature
@@ -177,6 +177,12 @@ globals:
   # počet aktualizácií hlavného čidla od prechodu na záložné (po 2 sa prepne späť)
   - id: zalozne_navrat
     type: int
+    restore_value: false
+    initial_value: '0'
+
+  # od kedy HA hlási hlavné čidlo ako nedostupné (NaN), ms; 0 = čidlo je dostupné
+  - id: hlavne_nan_od
+    type: uint32_t
     restore_value: false
     initial_value: '0'
 
@@ -1172,9 +1178,9 @@ select:
  
 script:
   # Zaznamená novú hodnotu čidla (idx = poradie možnosti selectu). Aktívne čidlo obnoví čerstvosť regulácie,
-  # hlavné čidlo počas záložného režimu počíta aktualizácie a po 2 sa regulácia vráti naň.
+  # hlavné čidlo počas záložného režimu: pri prvej platnej hodnote sa regulácia vráti naň.
   - id: riadiaca_hodnota
-    mode: queued
+    mode: parallel
     parameters:
       idx: int
     then:
@@ -1186,7 +1192,7 @@ script:
           if (id(riadiaca_zdroj) == tab[idx]) id(riadiaca_posledna_aktualizacia) = now;
           if (id(zalozne_idx) >= 0 && idx == id(riadiaca_idx)) {
             id(zalozne_navrat)++;
-            if (id(zalozne_navrat) >= 2) {
+            if (id(zalozne_navrat) >= 1) {
               ESP_LOGW("izba", "Hlavné čidlo %s opäť posiela dáta - návrat z záložného čidla %s",
                        id(riadiaca_izba).at(idx).value_or("?").c_str(), id(riadiaca_izba).at(id(zalozne_idx)).value_or("?").c_str());
               id(zalozne_idx) = -1;
@@ -1198,7 +1204,8 @@ script:
             }
           }
 
-  # Ak hlavné čidlo neposlalo dáta ${zalozne_po_min} min a záložné čidlo tej istej izby je čerstvé, regulácia prejde na záložné.
+  # Výpadok hlavného čidla = HA ho hlási ako nedostupné aspoň ${zalozne_po_min} min, alebo 12 h neprišla žiadna hodnota
+  # (HA posiela len zmeny, stabilná teplota nie je výpadok). Vtedy regulácia prejde na platné záložné čidlo tej istej izby.
   - id: riadiaca_zalozne_kontrola
     mode: single
     then:
@@ -1207,24 +1214,31 @@ script:
           int idx = id(riadiaca_idx);
           if (LIMIT == 0 || idx < 0 || id(zalozne_idx) >= 0) return;
           uint32_t now = millis();
+          esphome::sensor::Sensor *tab[9] = {id(detska_teplota), id(izba_detska_zigbee), id(izba_jedalen), id(izba_jedalen_hlavica),
+                                              id(izba_kuchyna), id(izba_obyvacka), id(izba_spalna), id(izba_pracovna), id(izba_kupelna)};
+          // od kedy je hlavné čidlo nedostupné (HA poslal "unavailable" = NaN)
+          bool nan_teraz = isnan(tab[idx]->state);
+          if (!nan_teraz) id(hlavne_nan_od) = 0;
+          else if (id(hlavne_nan_od) == 0) id(hlavne_nan_od) = now;
           if (now < LIMIT) return;                                  // ochrana po štarte
           static const int ZAL[9] = {1, 0, 3, 2, -1, -1, -1, -1, -1};   // záložné čidlo tej istej izby
           int fb = ZAL[idx];
           if (fb < 0) return;
+          const uint32_t MAX_TICHO_MS = 12UL * 60UL * 60UL * 1000UL;   // rovnako ako MAX_VEK_MS regulácie
           uint32_t ref = id(riadiaca_posledna_aktualizacia) > id(riadiaca_od) ? id(riadiaca_posledna_aktualizacia) : id(riadiaca_od);
-          if ((now - ref) < LIMIT) return;                          // hlavné čidlo je v poriadku
-          esphome::sensor::Sensor *tab[9] = {id(detska_teplota), id(izba_detska_zigbee), id(izba_jedalen), id(izba_jedalen_hlavica),
-                                              id(izba_kuchyna), id(izba_obyvacka), id(izba_spalna), id(izba_pracovna), id(izba_kupelna)};
+          bool vypadok = (nan_teraz && (now - id(hlavne_nan_od)) >= LIMIT) || (now - ref) >= MAX_TICHO_MS;
+          if (!vypadok) return;                                     // hlavné čidlo je v poriadku
           uint32_t cas = id(cidla_cas)[fb];
-          // záložné čidlo posiela len pri zmene, preto stačí hodnota nie staršia ako 2 x limit
-          if (cas == 0 || (now - cas) >= 2 * LIMIT || isnan(tab[fb]->state)) return;
+          // záložné čidlo musí mať platnú hodnotu (HA posiela len zmeny, vek hodnoty preto nerozhoduje)
+          if (!tab[fb]->has_state() || isnan(tab[fb]->state)) return;
+          if (cas == 0) cas = now;
           id(zalozne_idx) = fb;
           id(zalozne_navrat) = 0;
           id(riadiaca_zdroj) = tab[fb];
           id(riadiaca_posledna_aktualizacia) = cas;
           id(zalozne_cidlo).publish_state(true);
           id(sledovana_teplota_web).publish_state(tab[fb]->state);
-          ESP_LOGW("izba", "Hlavné čidlo %s neposiela dáta %u min - regulácia beží podľa záložného čidla %s",
+          ESP_LOGW("izba", "Hlavné čidlo %s nedostupné / bez dát (%u min od poslednej hodnoty) - regulácia beží podľa záložného čidla %s",
                    id(riadiaca_izba).at(idx).value_or("?").c_str(), (unsigned) ((now - ref) / 60000UL), id(riadiaca_izba).at(fb).value_or("?").c_str());
 
   # Nastaví zdroj teploty riadiacej izby podľa selectu „Riadiaca izba“ (pri štarte aj pri zmene).
@@ -1253,6 +1267,7 @@ script:
           id(riadiaca_idx) = idx.has_value() ? (int) *idx : 0;
           id(riadiaca_od) = millis();
           id(zalozne_navrat) = 0;
+          id(hlavne_nan_od) = 0;
           if (id(zalozne_idx) >= 0) ESP_LOGI("izba", "Zmena riadiacej izby - záložné čidlo zrušené");
           id(zalozne_idx) = -1;
           id(zalozne_cidlo).publish_state(false);
