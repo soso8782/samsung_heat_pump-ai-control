@@ -1682,7 +1682,41 @@ def suhrn_data(cfg, c, tyzden, now=None):
         d["poplachy"] = [x.get("text") for x in json.loads(get_state(c, ALERTS_KEY, "") or "[]") if x.get("text")]
     except ValueError:
         d["poplachy"] = []
+    d["porovnanie"] = suhrn_porovnanie(cfg, ml, now)
     return d
+
+
+def suhrn_porovnanie(cfg, lang="sk", now=None):
+    """Porovnanie riadiacich čidiel za 30 dní (porovnanie.get) do súhrnu: {"riadky": [text], "moznosti": [...], "najlepsia": názov/None,
+    "vonku_rozdiel": bool} alebo None. Aspoň 2 možnosti s >= 48 h: zoznam s rozptylom a hodinami, najmenší rozptyl, odporúčanie (+ upozornenie,
+    ak sa vonkajšie teploty líšia o viac než 3 °C); iba 1 možnosť s >= 48 h a iná s nejakými dátami: riadok „zatiaľ málo dát“; inak nič.
+    Chyba sa iba zaloguje - súhrn sa pošle aj bez porovnania."""
+    try:
+        import porovnanie
+        n2 = lambda v: i18n.dec(("%.2f" % v).replace(".", ","), lang)
+        mh = porovnanie.MIN_DATA_H
+        opts = [x for x in ((porovnanie.get(cfg, 30, now, lang) or {}).get("moznosti") or []) if x.get("hodin")]
+        ok = sorted([x for x in opts if x["hodin"] >= mh and x.get("rozptyl") is not None], key=lambda x: x["rozptyl"])
+        if len(ok) >= 2:
+            best = ok[0]["moznost"]
+            riadky = [tr("srv.suhrn.por_zoznam", lang, v="; ".join(tr("srv.suhrn.por_moznost", lang, nazov=x["moznost"], r=n2(x["rozptyl"]), h=x["hodin"])
+                                                               for x in ok), best=best)]
+            vs = [x["vonku"] for x in ok if x.get("vonku") is not None]
+            rozdiel = len(vs) >= 2 and max(vs) - min(vs) > porovnanie.OUT_DIFF
+            if rozdiel:
+                riadky.append(tr("srv.suhrn.por_vonku", lang))
+            riadky.append(tr("srv.suhrn.por_odporucanie", lang, v=best))
+            return {"riadky": riadky, "najlepsia": best, "vonku_rozdiel": rozdiel,
+                    "moznosti": [{"moznost": x["moznost"], "rozptyl": x["rozptyl"], "hodin": x["hodin"], "vonku": x.get("vonku")} for x in ok]}
+        if len(ok) == 1:
+            mal = [x for x in opts if x["hodin"] < mh]
+            if mal:
+                m = max(mal, key=lambda x: x["hodin"])
+                return {"riadky": [tr("srv.suhrn.por_malo_dat", lang, v=m["moznost"], h=m["hodin"])], "najlepsia": None, "vonku_rozdiel": False,
+                        "moznosti": [{"moznost": m["moznost"], "hodin": m["hodin"]}]}
+    except Exception as e:
+        print(time.strftime("%F %T"), "porovnanie čidiel do súhrnu zlyhalo: %s" % e, flush=True)
+    return None
 
 
 def suhrn_text(d, lang="sk"):
@@ -1708,6 +1742,7 @@ def suhrn_text(d, lang="sk"):
     out.append(tr("srv.suhrn.agent", lang, z=d.get("zmeny_agenta") or 0, i=d.get("zasahy") or 0))
     if d.get("prepnutia_riadiacej") is not None:
         out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
+    out.extend((d.get("porovnanie") or {}).get("riadky") or [])
     out.append(tr("srv.suhrn.poplachy", lang, v="; ".join(d["poplachy"]) if d.get("poplachy") else tr("srv.suhrn.ziadne", lang)))
     return "\n".join(out)
 
