@@ -782,6 +782,7 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
       <div class="ferr" id="spmsg" role="alert" hidden style="margin-top:12px"></div>
       <div class="stats" id="spstats"><div class="empty" style="padding-top:16px" data-i18n="spolocne.nacitavam">Načítavam…</div></div>
       <p class="sub" id="spnote" style="font-size:12.5px;margin:12px 0 0"></p>
+      <p class="sub" id="sptarifa" style="font-size:12.5px;margin:6px 0 0" hidden></p>
     </section>
     <section class="panel pad" id="spchartbox" hidden>
       <div class="head"><h2 data-i18n="spotreba.po_dnoch">Po dňoch</h2><div class="legend" id="splegend"></div></div>
@@ -1479,6 +1480,18 @@ async function loadSpotreba() {
   spData = j.error ? null : j;
   const m = $("#spmsg"); m.hidden = !j.error; m.textContent = j.error || "";
   spRender();
+  spTarifa(my);
+}
+/* Kúrenie podľa tarify: riadok pod poznámkou (api/tarifa); skrytý, kým je funkcia vypnutá a nemá vyhodnotenie */
+async function spTarifa(my) {
+  const el = $("#sptarifa"); let j; try { j = await api("api/tarifa"); } catch (e) { el.hidden = true; return; }
+  if (my !== spSeq || !j || j.error) return;
+  const st = j.stav || {}, v = j.vyhodnotenie || {}, pc = x => Math.round(x * 100);
+  let txt = "";
+  if (v.podiel_po != null && v.podiel_pred != null && v.uspora_eur != null) txt = t("spotreba.tarifa_riadok", {po: pc(v.podiel_po), pred: pc(v.podiel_pred), usp: f(v.uspora_eur, 2)});
+  else if (st.enabled) txt = t("spotreba.tarifa_zbiera", {pred: v.dni_pred || 0, po: v.dni_po || 0});
+  if (st.enabled && st.advice && st.advice.text) txt += t("spotreba.tarifa_odporucanie", {t: st.advice.text});
+  el.textContent = txt; el.hidden = !txt;
 }
 const spN = (v, n = 2) => v == null ? "–" : f(v, n);
 const spDm = ds => { const [, m, d] = ds.split("-").map(Number); return dmLabel(d, m); };
@@ -2877,7 +2890,8 @@ function renderSettingsStatus(s) {
   if (!d) { ds.textContent = tr("nastavenia.dhw_nedostupny"); return; }
   if (!cb.disabled) cb.checked = !!d.enabled;
   const w = d.window, wt = w ? (w.date && w.date !== todayStr() ? tr("nastavenia.dhw_okno_z", {d: w.date}) : tr("nastavenia.dhw_dnes")) + tr("nastavenia.dhw_cas", {a: fmtT(w.start), b: fmtT(w.end)}) : tr("nastavenia.dhw_nenaplanovane");
-  ds.textContent = (d.enabled ? wt : tr("nastavenia.dhw_vypnuty") + (w ? wt : "")) + (d.boosted ? tr("nastavenia.dhw_prebieha") + (d.base != null ? tr("nastavenia.dhw_povodne", {v: f(d.base)}) : "") + "." : (d.enabled ? tr("nastavenia.dhw_neprebieha") : ""));
+  const rs = w && w.reason ? tr("nastavenia.dhw_dovod_" + w.reason) : "";   /* dôvod výberu okna (TUV_TARIFA): nt_teplo / nt / teplo */
+  ds.textContent = (d.enabled ? wt : tr("nastavenia.dhw_vypnuty") + (w ? wt : "")) + (w ? rs : "") + (d.boosted ? tr("nastavenia.dhw_prebieha") + (d.base != null ? tr("nastavenia.dhw_povodne", {v: f(d.base)}) : "") + "." : (d.enabled ? tr("nastavenia.dhw_neprebieha") : ""));
 }
 $("#dhwplan").onchange = guard(async () => { const cb = $("#dhwplan"), want = cb.checked; cb.disabled = true; say("#dhwmsg", t("spolocne.ukladam"));
   const r = await api("api/settings", {dhw_plan: want}); cb.disabled = false;

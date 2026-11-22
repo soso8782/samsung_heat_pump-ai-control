@@ -12,7 +12,7 @@ import datetime, json, re, socket, sqlite3, threading, time, traceback, urllib.e
 import profil
 from common import (P, REF_NAME, REF_ROOM, ROOM_NAMES, ROOMS, S, SETTINGS, TARGET_ROOMS, adb, balance, cfg_int, day_bounds, day_summary,
                     dhw_intervals, get_state, get_targets, hour_stats, is_dry, load_cfg, local_midnight, set_state, tcq)
-import abtest, contacts, dhw, interventions, notify, temps
+import abtest, contacts, dhw, interventions, notify, tarifa, temps
 import i18n
 from i18n import tr
 
@@ -2039,6 +2039,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))
+    safe(lambda: tarifa.tick(cfg, c, now))
     safe(lambda: suhrn_run(cfg, c, now))
     safe(lambda: abtest.tick(cfg, c, now))
     if now - wd.get("last_eval", 0) >= 600:
