@@ -1,6 +1,6 @@
-# Zmeny 2.11.0 → 2.13.0 (22. 11. 2026)
+# Zmeny 2.11.0 → 2.14.0 (22. 11. 2026)
 
-Súhrn troch verzií, ktoré pridali **výber riadiacej izby** a nástroje okolo neho, týždenný súhrn kúrenia a bezpečnejšie
+Súhrn štyroch verzií, ktoré pridali **výber riadiacej izby** a nástroje okolo neho, týždenný súhrn kúrenia a bezpečnejšie
 nasadzovanie. Podrobnosti po verziách sú v [CHANGELOG.md](../CHANGELOG.md).
 
 ## Pre používateľa
@@ -21,10 +21,20 @@ nasadzovanie. Podrobnosti po verziách sú v [CHANGELOG.md](../CHANGELOG.md).
   odchýlka riadiacej izby od cieľa, štarty kompresora a krátke cykly, kWh/deň, COP a priemer vonku. Pri menej ako 48 h
   dát alebo rozdielnom počasí (> 3 °C) zobrazí upozornenie.
 
-### Týždenný súhrn kúrenia (2.13.0)
+- **Záložné čidlo (2.14.0)** – keď HA hlási hlavné čidlo ako nedostupné > 30 min (alebo 12 h bez hodnoty), firmvér
+  sám prejde na druhé čidlo tej istej izby (Detská ESPresense ↔ Zigbee, Jedáleň ↔ hlavica) a pri prvej platnej hodnote
+  sa vráti. Select sa nemení; web a HA ukážu „Záložné čidlo aktívne“.
+
+### Vyregulovanie ventilov (2.14.0)
+- Panel v karte *Izby*: zápis zmeny ventilu (izba, VK 33, −½ … +½ ot., poznámka). Po 24 a 48 h sa vyhodnotí rozptyl
+  izieb pred/po, posun izby voči ostatným a či sa líšilo počasie; verdikt lepšie / horšie / bez zmeny.
+- Upozorní, ak predošlá zmena ešte nie je vyhodnotená (jedna zmena naraz). Výsledky idú do týždenného súhrnu aj agentovi.
+
+### Týždenný súhrn kúrenia (2.13.0, 2.14.0)
 - Každý pondelok o 8:00 (nastaviteľné `SUHRN_DEN`, `SUHRN_HODINA`, vypnutie `SUHRN=0`) príde správcom súhrn
   predošlého týždňa: priemerné teploty a rozptyl izieb, vonku, spotreba a cena, COP, štarty kompresora, ohrevy TÚV,
-  zásahy agenta, prepnutia riadiacej izby, otvorené upozornenia a 2–3 vety odporúčania od AI.
+  zásahy agenta, prepnutia riadiacej izby, zmeny ventilov s výsledkom, porovnanie riadiacich čidiel s odporúčaním,
+  otvorené upozornenia a 2–3 vety odporúčania od AI.
 - Ak agent v čase odoslania nebežal, súhrn dobehne neskôr v ten istý týždeň; nikdy nepríde dvakrát.
 - Uloží sa do sekcie *Týždenný súhrn* na webe; `GET /api/suhrn?tyzden=YYYY-Www`.
 
@@ -67,7 +77,8 @@ nasadzovanie. Podrobnosti po verziách sú v [CHANGELOG.md](../CHANGELOG.md).
 | `POST /api/riadiaca {moznost}` | prepne riadiacu izbu/čidlo (správca) |
 | `GET /api/riadiaca/porovnanie?days=N` | porovnanie riadiacich čidiel (správca) |
 | `GET /api/suhrn?tyzden=YYYY-Www` | týždenný súhrn (správca) |
-| `/api/status` | nové bloky `riadiaca` (+ `nesulad`), `firmver`; upozornenie `cidlo` v `alerts` |
+| `GET /api/valves`, `POST /api/valve` | denník vyregulovania ventilov (správca) |
+| `/api/status` | nové bloky `riadiaca` (+ `nesulad`, `zalozne`), `firmver`; upozornenie `cidlo` v `alerts` |
 | `/api/series`, `/api/day` | blok `riadiaca` (prepnutia pre graf) |
 
 ## Upgrade

@@ -2,6 +2,23 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.14.0] – 2026-11-22
+
+### Pridané
+- **Automatické záložné čidlo riadiacej izby (firmvér 2.14.0).** Keď Home Assistant hlási hlavné čidlo riadiacej izby
+  ako nedostupné dlhšie ako `zalozne_po_min` (substitúcia, 30 min; 0 = vypnuté) alebo 12 h nepríde žiadna hodnota,
+  regulácia prejde na platné čidlo tej istej izby (Detská ESPresense ↔ Zigbee, Jedáleň ↔ hlavica). Select „Riadiaca
+  izba“ ostáva nezmenený; pri prvej platnej hodnote hlavného čidla sa regulácia vráti. Stabilná teplota nie je výpadok
+  (Zigbee/HA posielajú len zmeny). Nový binary_sensor „Záložné čidlo aktívne“, text v stave regulácie, upozornenie
+  vo webe (`riadiaca.zalozne` v `/api/status`).
+- **Denník vyregulovania ventilov** (karta Izby, panel „Vyregulovanie ventilov“): zápis izby, ventilu a zmeny
+  (−½ … +½ ot.), vyhodnotenie po 24 a 48 h – rozptyl izieb pred/po, posun izby voči ostatným, príznak iného počasia,
+  verdikt lepšie/horšie/bez zmeny; upozornenie, ak predošlá zmena ešte nie je vyhodnotená. `GET /api/valves`,
+  `POST /api/valve`. Výsledky v týždennom súhrne aj vo vstupe agenta.
+- **Týždenný súhrn: porovnanie riadiacich čidiel** za 30 dní (≥ 2 možnosti s ≥ 48 h) s odporúčaním čidla
+  s najmenším rozptylom a upozornením na rozdielne počasie.
+- Tagy verzií `v2.11.0` – `v2.13.0` na GitHube (`./update.sh --ref v2.14.0`).
+
 ## [2.13.0] – 2026-11-22
 
 ### Pridané

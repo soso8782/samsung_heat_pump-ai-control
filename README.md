@@ -29,7 +29,9 @@ web UI under Settings → "Language of notifications and the agent". *Slovak doc
   open windows/doors.
 - **Reference room** – click a room to choose the room and sensor the ESP regulates by (firmware select "Riadiaca izba");
   switch history in the room chart, warning when the ESP and the profile disagree, alert when the reference sensor stops
-  reporting, and a sensor comparison (room temperature spread, deviation from target, cycling, kWh/day, COP).
+  reporting, and a sensor comparison (room temperature spread, deviation from target, cycling, kWh/day, COP). When the
+  sensor drops out, the firmware switches to the other sensor in the same room.
+- **Radiator balancing** – a diary of valve changes (VK 33) evaluated by room temperature spread after 24 and 48 h.
 - **Weekly heating summary** – every Monday morning: room temperatures and spread, outdoor, consumption and cost, COP,
   compressor starts, DHW, agent interventions and a short AI recommendation (e.g. on balancing the radiator valves).
 - **How it heats by outdoor temperature** – heating curve settings (FSV 2011/2012/2021/2022/2031/2032/4013, curve offset, gain),

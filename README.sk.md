@@ -28,7 +28,9 @@ a agenta“. *English documentation: [README.md](README.md).*
 - **Izby** – teploty z Home Assistant (Zigbee/ESPHome čidlá), cieľové minimá, detail izby s grafom, otvorené okná/dvere.
 - **Riadiaca izba** – kliknutím vyberieš izbu a čidlo, podľa ktorého ESP reguluje (select „Riadiaca izba“ vo firmvéri);
   história prepnutí v grafe izby, upozornenie na nesúlad ESP a profilu, upozornenie pri výpadku riadiaceho čidla
-  a porovnanie čidiel (rozptyl teplôt izieb, odchýlka od cieľa, cyklovanie, kWh/deň, COP).
+  a porovnanie čidiel (rozptyl teplôt izieb, odchýlka od cieľa, cyklovanie, kWh/deň, COP). Pri výpadku čidla firmvér
+  sám prejde na záložné čidlo tej istej izby.
+- **Vyregulovanie ventilov** – denník zmien ventilov (VK 33) s vyhodnotením rozptylu izieb po 24 a 48 h.
 - **Týždenný súhrn kúrenia** – každý pondelok ráno: teploty a rozptyl izieb, vonku, spotreba a cena, COP, štarty kompresora,
   TÚV, zásahy agenta a krátke odporúčanie AI (napr. k vyregulovaniu ventilov).
 - **Ako kúri podľa vonku** – nastavenie krivky (FSV 2011/2012/2021/2022/2031/2032/4013, posun, zosilnenie), história zmien FSV,
