@@ -45,7 +45,8 @@ class Suhrn(unittest.TestCase):
         ps = [mock.patch.object(agent.notify, "event", side_effect=lambda cfg, k, t, m: (self.sent.append((k, t, m)) or (True, ""))),
               mock.patch.object(agent, "call_llm", self.llm),
               mock.patch("stats.get_range", side_effect=RuntimeError("bez stats")),
-              mock.patch("spotreba.report", side_effect=RuntimeError("bez ceny"))]
+              mock.patch("spotreba.report", side_effect=RuntimeError("bez ceny")),
+              mock.patch("porovnanie.get", return_value={"moznosti": []})]
         for p in ps:
             p.start(); self.addCleanup(p.stop)
 
@@ -147,6 +148,64 @@ class Suhrn(unittest.TestCase):
         txt = self.run_at(2026, 11, 23, 8, 1)
         self.assertIn("1 zmien nastavení", txt)
         self.assertIn("HA neodpovedá", txt)
+
+    def por(self, moznosti=None, side_effect=None):
+        """Mock porovnanie.get (30 dní) s danými možnosťami alebo chybou."""
+        p = mock.patch("porovnanie.get", return_value={"moznosti": moznosti or []}, side_effect=side_effect)
+        p.start(); self.addCleanup(p.stop)
+
+    @staticmethod
+    def opt(name, rozptyl, h, vonku=3.0):
+        return {"moznost": name, "rozptyl": rozptyl, "hodin": h, "vonku": vonku, "odchylka": 0.3, "starty_h": 1.0, "kratke": 0,
+                "kwh_den": 10.0, "cop": 3.1, "kluc": name, "cidlo": name}
+
+    def test_porovnanie_dve_moznosti(self):
+        self.por([self.opt("Obývačka", 0.8, 120), self.opt("Spálňa", 1.4, 60)])
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        txt = self.llm.call_args[0][2]        # vstup odporúčania modelu
+        for part in (txt, self.sent[0][2]):
+            self.assertIn("Porovnanie riadiacich čidiel (30 dní): Obývačka – rozptyl 0,80 °C, 120 h; Spálňa – rozptyl 1,40 °C, 60 h. "
+                          "Najmenší rozptyl: Obývačka.", part)
+            self.assertIn("Na základe porovnania môžeš nastaviť ako riadiace čidlo: Obývačka (najmenší rozptyl).", part)
+        self.assertNotIn("podmienky boli rozdielne", self.sent[0][2])
+        s = agent.suhrn_get(self.c, WEEK)
+        self.assertEqual(s["data"]["porovnanie"]["najlepsia"], "Obývačka")
+        self.assertEqual(len(s["data"]["porovnanie"]["moznosti"]), 2)
+        self.assertFalse(s["data"]["porovnanie"]["vonku_rozdiel"])
+
+    def test_porovnanie_jedna_moznost_malo_dat(self):
+        self.por([self.opt("Obývačka", 0.8, 120), self.opt("Spálňa", 1.4, 20)])
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        self.assertIn("Porovnanie čidiel: zatiaľ málo dát pre Spálňa (20 h).", self.sent[0][2])
+        self.assertNotIn("Na základe porovnania", self.sent[0][2])
+        self.assertIsNone(agent.suhrn_get(self.c, WEEK)["data"]["porovnanie"]["najlepsia"])
+
+    def test_porovnanie_iba_jedna_moznost_bez_riadku(self):
+        self.por([self.opt("Obývačka", 0.8, 120)])
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        self.assertNotIn("Porovnanie", self.sent[0][2])
+        self.assertIsNone(agent.suhrn_get(self.c, WEEK)["data"]["porovnanie"])
+
+    def test_porovnanie_malo_dat_bez_inej_moznosti(self):
+        self.por([self.opt("Obývačka", 0.8, 47)])     # nikto nemá ≥ 48 h
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        self.assertNotIn("Porovnanie", self.sent[0][2])
+
+    def test_porovnanie_pocasie(self):
+        self.por([self.opt("Obývačka", 0.8, 120, vonku=2.0), self.opt("Spálňa", 1.4, 60, vonku=7.5)])
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        self.assertIn("Vonkajšie teploty porovnávaných možností sa líšia o viac než 3 °C", self.sent[0][2])
+        self.assertTrue(agent.suhrn_get(self.c, WEEK)["data"]["porovnanie"]["vonku_rozdiel"])
+
+    def test_porovnanie_chyba_sumar_sa_posle(self):
+        self.por(side_effect=RuntimeError("porovnanie rozbité"))
+        self.assertTrue(self.run_at(2026, 11, 23, 8, 1))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Izby", self.sent[0][2])
+        self.assertNotIn("Porovnanie", self.sent[0][2])
+        s = agent.suhrn_get(self.c, WEEK)
+        self.assertIsNone(s["data"]["porovnanie"])
+        self.assertEqual(get_state(self.c, "last_suhrn"), WEEK)
 
     def test_api(self):
         import http.client, json, threading
