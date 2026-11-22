@@ -106,6 +106,17 @@ Home Assistant token, MQTT and so on. These secrets are stored only locally in `
 
 Daily database backup: `systemd/kurenie-backup.service` + `.timer` (runs `backup.sh`). Sample units are in `systemd/`.
 
+### Update
+
+Run as root in the install directory (`/opt/kurenie`). `update.sh` refuses to run if tracked files are modified, does a fast-forward
+only `git merge` of the upstream (or `--ref <tag/branch>`), checks Python syntax, restarts the four services, verifies them and
+rolls back to the previous commit on failure. Local files (`config.env`, databases, `backup/`) are not tracked and are not touched.
+
+```bash
+./update.sh --dry-run    # show incoming commits and diff stat, change nothing
+./update.sh              # update, or --ref v2.12.0 for a specific tag
+```
+
 Tests:
 
 ```bash
