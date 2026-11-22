@@ -99,6 +99,18 @@ MQTT a pod. Tieto tajomstvá sa ukladajú len lokálne do `config.env` (chmod 60
 
 Denná záloha databáz: `systemd/kurenie-backup.service` + `.timer` (spúšťa `backup.sh`). Vzorové jednotky sú v `systemd/`.
 
+### Aktualizácia
+
+Spúšťaj ako root v inštalačnom adresári (`/opt/kurenie`). `update.sh` skončí, ak sú zmenené sledované súbory, urobí len
+fast-forward `git merge` z upstreamu (alebo `--ref <tag/vetva>`), skontroluje syntax Python súborov, reštartuje štyri služby,
+overí ich a pri zlyhaní sa vráti na predchádzajúci commit. Lokálne súbory (`config.env`, databázy, `backup/`) nie sú sledované
+gitom a nemení ich.
+
+```bash
+./update.sh --dry-run    # ukáže prichádzajúce commity a rozsah zmien, nič nemení
+./update.sh              # aktualizácia; alebo --ref v2.12.0 pre konkrétny tag
+```
+
 Testy:
 
 ```bash

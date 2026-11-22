@@ -33,3 +33,4 @@ systemctl enable --now kurenie-collector kurenie-monitor kurenie-web kurenie-age
 systemctl restart kurenie-collector kurenie-monitor kurenie-web kurenie-agent
 sleep 3
 systemctl --no-pager --no-legend list-units 'kurenie-*'
+echo "Ďalšie aktualizácie z gitu: cd /opt/kurenie && ./update.sh (náhľad: ./update.sh --dry-run)"
