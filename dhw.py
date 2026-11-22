@@ -6,7 +6,7 @@ na konci okna vráti pôvodnú hodnotu. Jediná entita, ktorú tento modul zapis
 Zápis ide VÝLUČNE cez agent.esp_set_number() (ten rešpektuje DRY_RUN). Volá sa z watchdogu každú minútu: tick().
 """
 import json, re, time, urllib.request
-import abtest, notify
+import abtest, notify, tarifa
 import i18n
 from i18n import tr
 import profil
@@ -80,6 +80,39 @@ def pick_window(temps):
     return "%02d:00" % best[1], "%02d:00" % (best[1] + 2)
 
 
+def tuv_tarifa(cfg):
+    """TÚV v lacnej tarife je zapnutý (TUV_TARIFA=1) a tarifa je známa (TARIFA_VT_INTERVALY)."""
+    return str((cfg or {}).get("TUV_TARIFA", "0")).strip() == "1" and tarifa.known(cfg)
+
+
+def pick_window_tarifa(cfg, temps, date):
+    """Okno TÚV s preferenciou NT: 2-hodinové okno (rovnaká dĺžka a počet ohrevov ako doteraz: jedno za deň) úplne v NT s najvyšším
+    priemerom predpovede (lepšie COP). Najprv štarty 10..14 (ako doteraz), potom 0..22. Bez NT okna alebo bez predpovede None.
+    Vracia (start, end, dôvod) kde dôvod je "nt_teplo" (NT a najteplejšie z doterajšieho rozsahu), "nt" (NT, mimo bežného rozsahu)."""
+    y, m, d = (int(x) for x in date.split("-"))
+
+    def ts(h):
+        return int(time.mktime((y, m, d, h, 0, 0, 0, 0, -1)))
+
+    def best(rng):
+        b = None
+        for s in rng:
+            if s in temps and s + 1 in temps and temps[s] is not None and temps[s + 1] is not None \
+                    and not tarifa.overlaps_vt(cfg, ts(s), ts(s) + 7200):
+                avg = (temps[s] + temps[s + 1]) / 2.0
+                if b is None or avg > b[0] + 1e-9:
+                    b = (avg, s)
+        return b
+    b = best(range(10, 15))
+    reason = "nt_teplo"
+    if not b:
+        b = best(range(0, 23))
+        reason = "nt"
+    if not b:
+        return None
+    return "%02d:00" % b[1], "%02d:00" % (b[1] + 2), reason
+
+
 def fetch_temps(cfg, date):
     url = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&hourly=temperature_2m&forecast_days=2&timezone=auto"
            % (cfg["LAT"], cfg["LON"]))
@@ -103,15 +136,22 @@ def ensure_window(cfg, c, now=None):
     if lt.tm_hour < 6:
         return None
     start = end = None
+    reason = ""
     if cfg.get("LAT") and cfg.get("LON"):
         last_try = float(get_state(c, "dhw_fetch_try", "0") or 0)
         if now - last_try < 300:
             return None
         try:
             set_state(c, "dhw_fetch_try", now)
-            win = pick_window(fetch_temps(cfg, today))
+            temps = fetch_temps(cfg, today)
+            win = pick_window_tarifa(cfg, temps, today) if tuv_tarifa(cfg) else None
             if win:
-                start, end = win
+                start, end, reason = win
+            else:
+                win = pick_window(temps)
+                if win:
+                    start, end = win
+                    reason = "teplo" if tuv_tarifa(cfg) else ""
         except Exception as e:
             print("plánovač TÚV: predpoveď nedostupná (%s)" % type(e).__name__, flush=True)
             if lt.tm_hour < 9:
@@ -119,6 +159,8 @@ def ensure_window(cfg, c, now=None):
     if not start:
         start, end = DEFAULT_WINDOW
     w = {"date": today, "start": start, "end": end}
+    if reason:
+        w["reason"] = reason      # nt_teplo / nt / teplo (iba pri TUV_TARIFA=1; bez NT okna sa použije pôvodný výber)
     set_state(c, "dhw_window", json.dumps(w))
     return w
 

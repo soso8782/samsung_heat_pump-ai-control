@@ -175,3 +175,19 @@ Riadok v `runs`: `status` môže byť aj `"rutina"`; akcie majú `"action_id"` a
    posledného odoslania), Ohrev vody (prepínač plánovača s vysvetlením, dnešné okno, či práve prebieha), Heslo.
 6. Panel „Týždenný súhrn“ (najnovší rozbalený, staršie zbalené), ak nejaký je.
 7. Odpoveď na správu: ak `intervention` nie je null, pod odpoveďou agenta malá poznámka „Zapísané ako zásah, vyhodnotí sa <kedy>“.
+
+## Kúrenie a TÚV podľa tarify (predvolene vypnuté)
+- `tarifa.py`, `tarifa.tick` sa volá z watchdogu každú minútu. Config: `TARIFA_KURENIE=0`, `TARIFA_VT_INTERVALY` (napr. `06:00-08:00,17:00-19:00`;
+  prázdne = tarifa neznáma = nič sa nerobí), `TARIFA_PREDSTIH_H=2`, `TARIFA_PREDKURENIE_C=0.5`, `TARIFA_UTLM_C=0.5` (obe 0–1,0, krok 0,5),
+  `TARIFA_BEZ_KURENIA_C=12`.
+- Pred blokom VT (`PREDSTIH_H`) sa cieľ izby zvýši o `PREDKURENIE_C`, počas VT zníži o `UTLM_C`, po VT sa vráti pôvodný. Zapisuje sa iba
+  `ROOM_TARGET_ENT` cez `agent.esp_set_number` (rozsah profilu, krok 0,5), každá zmena je riadok v `actions` s dôvodom „tarifa: …“.
+- Poistky: predhrev sa preskočí pri teplej predpovedi (priemer okna >= `BEZ_KURENIA_C`), v lete a bez predpovede; útlm sa nerobí (a prebiehajúci
+  sa ruší), ak je niektorá izba pod minimom + 0,3 °C alebo nie sú čerstvé teploty izieb; pri A/B teste, vypnutom agentovi sa nič nemení
+  (nami upravený cieľ sa vráti); ručnú zmenu cieľa používateľom nikdy neprepíše; po neúspešnom zápise sa o 5 min skúsi znova.
+- Režim `advise`: len odporúčanie (`state.tarifa_advice`, `status.tarifa.advice`, riadok `runs` pri zmene fázy). `control`: zápis.
+- Vyhodnotenie: `GET /api/tarifa` -> `{stav, vyhodnotenie}`; kWh čerpadla vo VT/NT po dňoch (state `tarifa_dni`), podiel VT pred / po zapnutí
+  (`tarifa_od`), odhad úspory = (podiel pred - po) x kWh po zapnutí x (cena VT - cena NT), najmenej 3 dni pred aj po. Riadok v záložke Spotreba.
+- TÚV v lacnej tarife: `TUV_TARIFA=0` (vyžaduje `TARIFA_VT_INTERVALY`). `dhw.pick_window_tarifa` vyberie 2-hodinové okno úplne v NT s najvyšším
+  priemerom predpovede (najprv štart 10..14, potom 0..22); stále jedno okno za deň ako doteraz. Bez NT okna / predpovede / známej tarify platí
+  pôvodný `pick_window`. Okno má pole `reason` (`nt_teplo`, `nt`, `teplo`), zobrazené v Nastaveniach pri plánovači TÚV.
