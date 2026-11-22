@@ -1563,12 +1563,15 @@ def weekly(cfg, c, now=None):
     try:
         update_days(cfg, c)
         table, nd = days_text(cfg, c, 7, with_today=True, lang=ml)
-        ivs = c.execute("SELECT ts, kind, room, text, status, result FROM interventions WHERE ts>=? ORDER BY ts", (since,)).fetchall()
+        ivs = c.execute("SELECT ts, kind, room, text, status, result, result48, detail FROM interventions WHERE ts>=? ORDER BY ts", (since,)).fetchall()
         ivl = []
-        for t, k, room, tx, st, rs in ivs:
+        for t, k, room, tx, st, rs, rs48, dt in ivs:
             vt = ""
             try:
                 vt = (json.loads(rs) or {}).get("verdict_text", "") if rs else ""
+                v48 = ((json.loads(rs48) or {}).get("valve") or {}) if rs48 else {}
+                if v48.get("verdict"):
+                    vt += " | " + interventions.valve_text(v48, ml, 48)
             except ValueError:
                 pass
             ivl.append("%s %s%s – %s [%s] %s" % (time.strftime("%d.%m. %H:%M", time.localtime(t)), interventions.kind_label(k, ml),
@@ -1674,6 +1677,8 @@ def suhrn_data(cfg, c, tyzden, now=None):
         pass
     d["zmeny_agenta"] = c.execute("SELECT count(*) FROM actions WHERE applied=1 AND coalesce(undone,0)=0 AND ts>=? AND ts<?", (a, b)).fetchone()[0]
     d["zasahy"] = c.execute("SELECT count(*) FROM interventions WHERE ts>=? AND ts<?", (a, b)).fetchone()[0]
+    d["ventily"] = [{"ts": iv["ts"], "izba": iv["room"], "text": interventions.valve_line(iv, ml)}
+                    for iv in reversed(interventions.list_items(c, 50, a, b, kind="ventil")) if iv["status"] != "zrusene"]
     try:
         d["prepnutia_riadiacej"] = len(riadiaca_prepnutia(cfg, c, a, b)["zmeny"])
     except Exception:
@@ -1706,6 +1711,8 @@ def suhrn_text(d, lang="sk"):
     if d.get("tuv_n") is not None:
         out.append(tr("srv.suhrn.tuv", lang, n=d["tuv_n"]))
     out.append(tr("srv.suhrn.agent", lang, z=d.get("zmeny_agenta") or 0, i=d.get("zasahy") or 0))
+    if d.get("ventily"):
+        out.append(tr("srv.suhrn.ventily", lang, v="; ".join(x["text"] for x in d["ventily"])))
     if d.get("prepnutia_riadiacej") is not None:
         out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
     out.append(tr("srv.suhrn.poplachy", lang, v="; ".join(d["poplachy"]) if d.get("poplachy") else tr("srv.suhrn.ziadne", lang)))
