@@ -66,3 +66,30 @@ jobs:
 
       - name: Syntax inline skriptov a stats_ui.js / sw.js
         run: node .github/scripts/js_syntax.mjs
+
+  # Skutočný prehliadač: app.py nad dočasnou inštaláciou (DRY_RUN, mŕtve ESP/HA, syntetické DB), prihlásenie a prechod
+  # všetkými záložkami vrátane Štatistík. Zachytí chyby, ktoré syntaktická kontrola nevidí (napr. duplicitné const po merge).
+  prehliadac:
+    name: prehliadac (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Europe/Bratislava
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Playwright (Chromium)
+        run: |
+          pip install playwright==1.49.1
+          python -m playwright install --with-deps chromium
+
+      - name: Duplicitné deklarácie v JS (bez prehliadača)
+        run: python -X utf8 test_js_deklaracie.py
+
+      - name: Smoke test webu v prehliadači
+        run: python -X utf8 tests_ui/test_prehliadac.py -v
