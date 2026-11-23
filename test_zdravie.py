@@ -286,7 +286,7 @@ class ApiAgent(Base):
     def test_tvar_api(self):
         self.fill(degr={"cop"})
         self.run_z()
-        o = zdravie.api(self.cfg)
+        o = zdravie.api(self.cfg, now=NOW)
         for k in ("enabled", "stav", "dost_dat", "okno", "tyzdne", "indikatory", "chyby", "nalezy", "prahy"):
             self.assertIn(k, o)
         self.assertEqual([i["kod"] for i in o["indikatory"]], list(zdravie.KODY))
