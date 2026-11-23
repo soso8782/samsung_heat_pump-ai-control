@@ -71,6 +71,20 @@ Vyhodnotenie po 24 h (`result`) a po 48 h (`result48`, spoľahlivejšie; len zá
 (priemer hodinového max−min cez izby), `room_vs_others_*` (izba − priemer ostatných), `vonku_delta`, `weather_differs` (> 3 °C), `verdict`
 (`lepsie`/`horsie` pri zmene rozptylu ≥ 0,2 °C, inak `bez_zmeny`). Týždenný súhrn (`ventily`) a vstup modelu obsahujú zmeny ventilov s 48 h výsledkom.
 
+### Asistent vyregulovania (`asistent.py`)
+Deterministicky odporučí ďalší JEDEN krok na ventile. Vstup: priemery izieb za 7 dní len v kúrivých hodinách (vonku < 15 °C, aspoň 24 hodín),
+denník ventilov s výsledkami (48 h, inak 24 h), minimá izieb z profilu. Pravidlá:
+- čaká zmena bez 48 h výsledku → „počkaj“ (kedy bude hotová); rozptyl priemerov < 0,5 °C → „vyregulované, netreba meniť“;
+- odchýlka izby = priemer izby − priemer izieb; prah 0,25 °C. Uprednostní sa priškrtenie najteplejšej izby o ¼ ot. (len ak by neklesla pod
+  minimum); studenú izbu otvára, len ak nie je teplá na priškrtenie alebo je jej odchýlka > 2× väčšia. Riadiaca izba sa môže priškrtiť (krivka sa zvýši);
+- účinok (°C na otáčku, izba voči ostatným) sa učí z vyhodnotených krokov (priemer izby, inak všetkých, inak predpoklad 0,3 °C na ¼ ot.); odchýlka
+  > 1 °C a malý účinok (< 0,15 °C na ¼ ot.) → ½ ot.;
+- učenie z verdiktov: krok v rovnakom smere v izbe po „horšie“ sa nezopakuje; po „bez zmeny“ sa nezopakuje, ibaže bol účinok takmer nulový (< 0,1 °C) → dvojnásobný krok;
+- kumulatívne otáčky z denníka; pri otváraní bez záznamu o priškrtení sa upozorní na neznámu východiskovú polohu.
+API: GET `/api/ventily/odporucanie` (admin) → `{status: caka|malo_dat|vyregulovane|krok|ziadny, headline, reason, effect, notes[], step:{room,turns,change,label,note}|null,
+wait_until, spread, rooms:[{key,name,mean,dev,min,cum_turns}], controlling, text}`. UI: v paneli „Vyregulovanie ventilov“ tlačidlo „Zapísať túto zmenu“
+predvyplní formulár (zmenu fyzicky robí a potvrdzuje používateľ). Riadok odporúčania je v týždennom súhrne (`asistent`) a vo vstupe modelu.
+
 ## 4. Šetrenie volaní modelu („rutina“)
 V `main()` pred `run_once`: `need, reasons = needs_llm(cfg, c, cur, hrs)`. Model sa volá, ak platí aspoň jedno:
 - vynútený beh (`run_now`), nová správa majiteľa od posledného behu s modelom, nový zásah alebo hotové vyhodnotenie od posledného behu;

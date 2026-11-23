@@ -3,7 +3,7 @@
 import datetime, hashlib, hmac, html as _html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, unicodedata, urllib.request, urllib.error
 import profil
 import i18n
-import utlm
+import asistent, utlm
 from i18n import tr, tn
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -2036,6 +2036,12 @@ class H(BaseHTTPRequestHandler):
                 c = adb(cfg)
                 try:
                     return self.send(200, {"items": interventions.list_items(c, lim, kind="ventil")})
+                finally:
+                    c.close()
+            if u.path == "/api/ventily/odporucanie":
+                c = adb(cfg)
+                try:
+                    return self.send(200, asistent.recommend(cfg, c, lang=lang))
                 finally:
                     c.close()
             if u.path == "/api/reports":
