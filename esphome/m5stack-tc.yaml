@@ -4,11 +4,12 @@
 
 substitutions:
   # verzia firmvéru: web ju porovná s FW_MIN v app.py; pri zmene konfigurácie, ktorú web potrebuje, ju zvýš
-  fw_verzia: "2.14.0"
+  fw_verzia: "2.16.0"
   # --- Nastavenia inštalácie: tento súbor needitujte, hodnoty prepíšte v lokálnom obale
   # m5stack-tc.local.yaml (vzor: m5stack-tc.local.example.yaml). Tu sú predvolené hodnoty.
   esp_ip: 192.168.1.199   # IP adresa ESP vo vašej sieti (ESP_URL v config.env)
   zalozne_po_min: "30"    # po koľkých minútach, keď HA hlási hlavné čidlo riadiacej izby ako nedostupné, sa použije záložné čidlo tej istej izby (0 = vypnuté); bez akejkoľvek hodnoty 12 h = výpadok vždy
+  bezpecny_po_h: "6"      # bezpečný režim: po koľkých hodinách bez použiteľnej izbovej teploty (alebo bez spojenia s HA) sa posun krivky postupne vráti na 0 a uvoľní sa hybridné vypnutie kúrenia (0 = vypnuté)
   ha_izba_jedalen: sensor.0x00124b0029114db8_temperature
   ha_radiator_jedalen: sensor.jedalen_radiator_local_temperature
   ha_izba_obyvacka: sensor.obyvacka_t_h_cidlo_temperature
@@ -192,6 +193,24 @@ globals:
     restore_value: false
     initial_value: '0'
 
+  # bezpečný režim: aktívny (true) = regulácia nezapisuje, posun sa po krokoch vracia na 0
+  - id: bezpecny_aktivny
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  # od kedy (ms) nie je použiteľná riadiaca teplota (alebo je HA odpojené); 0 = teplota je použiteľná
+  - id: bezpecny_bez_od
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+  # čas posledného kroku posunu k 0 v bezpečnom režime (ms); 0 = ďalší krok hneď
+  - id: bezpecny_krok
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
   # senzor, podľa ktorého beží izbová regulácia (nastavuje ho select „Riadiaca izba“ cez skript riadiaca_nastav)
   - id: riadiaca_zdroj
     type: esphome::sensor::Sensor*
@@ -338,7 +357,23 @@ interval:
               };
               char buf[160];
 
-              if (rezim == 0) { stav("Vypnutá - izba sa ignoruje"); return; }
+              // Koniec bezpečného režimu: regulácia nadviaže na aktuálny posun (posun_i = NAN -> bez skoku)
+              auto bez_koniec = [&](const char *dovod) {
+                if (!id(bezpecny_aktivny)) return;
+                id(bezpecny_aktivny) = false;
+                id(bezpecny_krok) = 0;
+                id(posun_i) = NAN;
+                id(posun_i_cas) = 0;
+                id(bezpecny_rezim).publish_state(false);
+                ESP_LOGW("izba", "Bezpečný režim ukončený (%s) - regulácia pokračuje od aktuálneho posunu", dovod);
+              };
+
+              if (rezim == 0) {
+                bez_koniec("regulácia vypnutá");
+                id(bezpecny_bez_od) = 0;
+                stav("Vypnutá - izba sa ignoruje");
+                return;
+              }
 
               // HA posiela hodnotu len pri ZMENE - stála teplota neznamená výpadok.
               // Výpadok = HA odpojený, entita unavailable/unknown (NaN), alebo
@@ -349,6 +384,64 @@ interval:
               bool cerstva = !isnan(izba_t) && api::global_api_server->is_connected() &&
                              id(riadiaca_posledna_aktualizacia) != 0 &&
                              (millis() - id(riadiaca_posledna_aktualizacia)) < MAX_VEK_MS;
+
+              // ---- BEZPEČNÝ REŽIM: dlhý výpadok izbovej teploty alebo spojenia s HA ----
+              // cerstva = false znamená: aktívny zdroj (aj záložné čidlo) je NaN / nikdy nič neprišlo / 12 h ticho, alebo je API (HA)
+              // odpojené. Ak to trvá nepretržite ${bezpecny_po_h} h (počíta sa od štartu), regulácia prestane zapisovať, posun sa
+              // po 0,5 °C každých 30 min vráti na 0 a hybridné vypnutie kúrenia sa uvoľní. Návrat použiteľnej teploty ho ukončí.
+              {
+                const uint32_t BEZ_MS = (uint32_t) atoi("${bezpecny_po_h}") * 3600000UL;
+                if (cerstva) {
+                  id(bezpecny_bez_od) = 0;
+                  bez_koniec("teplota je späť");
+                } else if (id(bezpecny_bez_od) == 0) {
+                  id(bezpecny_bez_od) = millis();
+                }
+                if (BEZ_MS == 0) {
+                  bez_koniec("vypnutý");
+                } else if (!cerstva && !id(bezpecny_aktivny) && (millis() - id(bezpecny_bez_od)) >= BEZ_MS) {
+                  id(bezpecny_aktivny) = true;
+                  id(bezpecny_krok) = 0;
+                  id(bezpecny_rezim).publish_state(true);
+                  ESP_LOGW("izba", "Bezpečný režim: %u h bez použiteľnej izbovej teploty - posun krivky postupne na 0, kúrenie sa uvoľní",
+                           (unsigned) ((millis() - id(bezpecny_bez_od)) / 3600000UL));
+                }
+                if (id(bezpecny_aktivny)) {
+                  const uint32_t BEZ_KROK_MS = 30UL * 60UL * 1000UL;
+                  const uint32_t BEZ_ODSTUP_MS = 10UL * 60UL * 1000UL;   // rovnaký limit zápisov ako regulácia
+                  unsigned hod = (unsigned) ((millis() - id(bezpecny_bez_od)) / 3600000UL);
+                  zal = "Bezpečný režim – chýba izbová teplota " + std::to_string(hod) + " h, posun → 0 | " + zal;
+                  float akt = id(wl_posun).state;
+                  if (isnan(akt)) {
+                    snprintf(buf, sizeof(buf), "posun neznámy");
+                  } else if (fabsf(akt) < 0.05f) {
+                    snprintf(buf, sizeof(buf), "posun 0");
+                  } else {
+                    float cielovy = akt > 0.0f ? std::max(0.0f, akt - 0.5f) : std::min(0.0f, akt + 0.5f);
+                    bool krok_ok = id(bezpecny_krok) == 0 || (millis() - id(bezpecny_krok)) >= BEZ_KROK_MS;
+                    bool odstup_ok = id(posun_posledny_zapis) == 0 || (millis() - id(posun_posledny_zapis)) >= BEZ_ODSTUP_MS;
+                    if (krok_ok && odstup_ok) {
+                      ESP_LOGI("izba", "Bezpečný režim: posun krivky %.1f -> %.1f °C", akt, cielovy);
+                      id(bezpecny_krok) = millis();
+                      id(posun_posledny_zapis) = millis();
+                      auto call = id(wl_posun).make_call();
+                      call.set_value(cielovy);
+                      call.perform();
+                      akt = cielovy;
+                    }
+                    snprintf(buf, sizeof(buf), "posun %.1f -> 0", akt);
+                  }
+                  // uvoľniť kúrenie vypnuté reguláciou (hybrid / vypínanie kúrenia); tarifa si svoje vypnutie drží
+                  if (id(regulacia_vypla_kurenie)) {
+                    ESP_LOGW("izba", "Bezpečný režim: uvoľňujem kúrenie vypnuté reguláciou");
+                    id(regulacia_vypla_kurenie) = false;
+                    if (id(bolo_vypnute_blokovanim)) id(kurenie_bolo_zapnute) = true;
+                    else id(sw_kurenie).turn_on();
+                  }
+                  stav(buf);
+                  return;
+                }
+              }
 
               // Poistka reaguje až na výpadok dlhší ako 5 min (aj po štarte ESP),
               // krátke výpadky senzora/HA nemenia nič - posun sa len drží.
@@ -1322,6 +1415,14 @@ text_sensor:
 # BINÁRNE SENZORY (pre technickú diagnostiku cyklov)
 #########################################################################
 binary_sensor:
+  # ON = bezpečný režim: dlho chýba použiteľná izbová teplota (alebo spojenie s HA), posun krivky sa vracia na 0 a regulácia nezapisuje
+  - platform: template
+    name: "Bezpečný režim aktívny"
+    id: bezpecny_rezim
+    web_server:
+      sorting_group_id: g_izba
+      sorting_weight: 5.5
+
   # ON = hlavné čidlo riadiacej izby neposiela dáta a regulácia beží podľa záložného čidla (select ostáva nezmenený)
   - platform: template
     name: "Záložné čidlo aktívne"

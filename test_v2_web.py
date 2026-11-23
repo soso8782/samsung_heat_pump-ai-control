@@ -363,6 +363,16 @@ class Nesulad(Tmp):
         with mock.patch.object(app.urllib.request, "urlopen", side_effect=OSError("down")):
             self.assertIs(app.zalozne_get(self.cfg), False)
 
+    def test_bezpecny_rezim(self):
+        """Príznak „bezpecny“ v riadiaca bloku: binárny senzor „Bezpečný režim aktívny“; starší firmvér (404) alebo chyba = False."""
+        for zal, exp in ((True, True), (False, False), (None, False)):
+            app._riadiaca_cache.update(t=0.0, ttl=0, v=None)
+            with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("Salón (Zigbee)", zal=zal)):
+                i = app.riadiaca_info(self.cfg, force=True)
+            self.assertIs(i["bezpecny"], exp, zal)
+        with mock.patch.object(app.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertIs(app.zalozne_get(self.cfg, ent=app.BEZPECNY_ENT), False)
+
     def test_firmver_hint_bez_riadiacej_a_nedostupne(self):
         with mock.patch.object(app.urllib.request, "urlopen", side_effect=self._esp("x", "9.9.9")):
             self.assertTrue(app.firmver_info(self.cfg, None)["hint"])      # ESP odpovedá, ale select nemá

@@ -2188,6 +2188,7 @@ let riadWarnHtml = "";
 function renderRiadWarn(s) {
   const box = $("#riadwarn"); if (!box) return;
   let html = "";
+  if (s.riadiaca && s.riadiaca.bezpecny) html += `<p class="sub" role="alert" style="margin-top:10px;color:var(--crit-ink)"><b>${esc(t("prehlad.bezpecny"))}</b></p>`;
   if (s.riadiaca && s.riadiaca.zalozne) html += `<p class="sub" role="status" style="margin-top:10px;color:var(--warn-ink)">${esc(t("prehlad.zalozne_cidlo"))}</p>`;
   if (!isUser()) {
     const fw = s.firmver || {}, ns = s.riadiaca && s.riadiaca.nesulad, nm = k => (RN[k] != null ? RN[k] : k);
