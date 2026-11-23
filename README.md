@@ -82,6 +82,7 @@ hodinové = hourly.)
 | `spotreba.py`, `ha_cost.py` | daily consumption and cost, tariffs, import into HA statistics |
 | `vonku.py` | "How it heats by outdoor temperature" – curve, water and rooms by outdoor temperature |
 | `ha_pub.py` | sensors for Home Assistant via MQTT discovery |
+| `ha_ent.py` | Away / night setback / tariff / health / cost entities + commands for Home Assistant via MQTT |
 | `ha_ws.py` | minimal WebSocket client for Home Assistant |
 | `contacts.py`, `contacts_mqtt.py`, `temps.py` | window/door contacts and temperature sensors |
 | `dhw.py` | domestic hot water (scheduler, manual boost) |
@@ -147,6 +148,25 @@ this repository but in its own: **[samsung_heat_pump-ai-control-home-assistant-i
 
 See the integration's README for the full procedure. Sensors for the Energy dashboard (consumption, COP) are still published
 by this app via MQTT (`ha_pub.py`).
+
+### Entities for automations and voice (MQTT, optional)
+
+Besides the energy sensors the app publishes, through MQTT discovery on the same device: **Away from home** (switch), **Night setback – mode**
+and **Away from home – mode** (selects off/advise/control), night setback state and next change, tariff phase and active offset,
+**Heat pump health** (+ a "problem" binary sensor), **Estimated cost to the end of the month** and the app version / update available.
+Commands from Home Assistant are accepted **only with `MQTT_OVLADANIE=1`** in `config.env` (default `0`: the controls are read-only sensors),
+never with `DRY_RUN=1`, and go through the same checks as the web (A/B test, modes); they are logged as "Home Assistant (MQTT)".
+`MQTT_PUB=0` publishes nothing. Example – away when everyone has left:
+
+```yaml
+automation:
+  - alias: "Heating: away"
+    trigger: {platform: numeric_state, entity_id: zone.home, below: 1, for: "01:00:00"}
+    action: {service: switch.turn_on, target: {entity_id: switch.kurenie_tc_away}}
+  - alias: "Heating: back home"
+    trigger: {platform: numeric_state, entity_id: zone.home, above: 0}
+    action: {service: switch.turn_off, target: {entity_id: switch.kurenie_tc_away}}
+```
 
 ## MCP server for Claude
 

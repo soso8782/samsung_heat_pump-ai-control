@@ -62,3 +62,36 @@ locales ani iné existujúce súbory (súčasne beží iná úloha, ktorá ich m
 Python: "C:\Program Files\KiCad\10.0\bin\python.exe" -X utf8 z priečinka gh_kurenie.
 Odovzdanie: zoznam súborov, výstup testov, presný popis, ako má hlavný agent napojiť ha_api do app.py (routy, auth, akcie)
 a čo pridať do ui.html, a čo si nevedel overiť.
+
+## Doplnok: entity cez MQTT (`ha_ent.py`, bez integrácie)
+Vlákno agenta `ha_ent` (vedľa `ha_pub`) publikuje cez MQTT discovery na **to isté zariadenie** (`identifiers: kurenie_tc`) ďalšie entity;
+stav v `kurenie/tc/ent/state` (JSON, retained, raz za 30 s a hneď po príkaze), dostupnosť `kurenie/tc/ent/avail` (`online` / last will `offline`).
+Beží v agentovi, lebo ten beží stále a drží `utlm.tick`; jedno dlhé spojenie, reconnect 5 -> 60 s. `MQTT_PUB=0` = nič sa neposiela.
+
+| Entita | Typ | Poznámka |
+|---|---|---|
+| Preč z domu | switch (pri `MQTT_OVLADANIE=0` binary_sensor) | ON = `utlm.away_start` bez času návratu, OFF = zrušiť |
+| Nočný útlm – režim, Preč z domu – režim | select off/advise/control (pri 0 enum senzor) | rovnaké režimy ako `/api/utlm` |
+| Nočný útlm – stav / ďalšia zmena | sensor enum normal/night/ramp/away / timestamp | |
+| Tarifa – fáza / aktívny posun | sensor norm/pred/vt / °C | |
+| Zdravie čerpadla | sensor ok/warn/crit/nodata, atribúty `indikatory`, `chyby`, `nalezy` | obnova 10 min |
+| Zdravie čerpadla – problém | binary_sensor (problem) | warn alebo crit |
+| Odhad nákladov do konca mesiaca | sensor € (`naklady.odhad`) | najviac raz za 30 min |
+| Verzia aplikácie, Dostupná aktualizácia | sensor, binary_sensor (`verzia.info`) | diagnostika |
+
+Príkazové témy (iba pri `MQTT_OVLADANIE=1`; inak sa ani neodoberajú): `kurenie/tc/ent/cmd/away` (`ON`/`OFF`), `.../cmd/utlm_mode`, `.../cmd/prec_mode`
+(`off`/`advise`/`control`). Poistky: neplatný payload sa ignoruje; retained príkazy sa ignorujú; pri `DRY_RUN=1` sa nič nevykoná (len záznam do runs);
+vykonanie ide cez `utlm.away_start` / `away_cancel` / `state` ako web, takže platí A/B test aj vypnutý režim „Preč“ (odmietnutie sa zapíše do runs).
+V logu je „kto“ = `Home Assistant (MQTT)`. Zmena `MQTT_OVLADANIE` mení doménu entity; stará retained konfigurácia sa vymaže.
+
+Príklad automatizácie (všetci preč -> Preč z domu, návrat -> zrušiť):
+```yaml
+automation:
+  - alias: "Kúrenie: preč z domu"
+    trigger: {platform: numeric_state, entity_id: zone.home, below: 1, for: "01:00:00"}
+    action: {service: switch.turn_on, target: {entity_id: switch.kurenie_tc_away}}
+  - alias: "Kúrenie: niekto doma"
+    trigger: {platform: numeric_state, entity_id: zone.home, above: 0}
+    action: {service: switch.turn_off, target: {entity_id: switch.kurenie_tc_away}}
+```
+(`entity_id` závisí od názvu zariadenia v HA; skontroluj ho v detaile entity.)

@@ -75,6 +75,7 @@ Home Assistant (izby, kontakty, elektromer) <──WS/REST/MQTT──> agent.py 
 | `spotreba.py`, `ha_cost.py` | denná spotreba a cena, cenníky, import do HA štatistík |
 | `vonku.py` | „Ako kúri podľa vonku“ – krivka, voda a izby podľa vonkajšej teploty |
 | `ha_pub.py` | senzory pre Home Assistant cez MQTT discovery |
+| `ha_ent.py` | entity Preč z domu / útlm / tarifa / zdravie / náklady + príkazy pre Home Assistant cez MQTT |
 | `ha_ws.py` | minimálny WebSocket klient pre Home Assistant |
 | `contacts.py`, `contacts_mqtt.py`, `temps.py` | okenné/dverné kontakty a teplotné čidlá |
 | `dhw.py` | teplá úžitková voda (plánovač, manuálny ohrev) |
@@ -140,6 +141,25 @@ ale vo vlastnom: **[samsung_heat_pump-ai-control-home-assistant-integration](htt
 - Kľúč vytvoríš v aplikácii: **Nastavenia → Integrácia do Home Assistanta → Vytvoriť kľúč**.
 
 Podrobný postup je v README integrácie. Senzory pre panel Energia (spotreba, COP) naďalej posiela táto aplikácia cez MQTT (`ha_pub.py`).
+
+### Entity pre automatizácie a hlas (MQTT, voliteľné)
+
+Okrem energetických senzorov aplikácia cez MQTT discovery na rovnaké zariadenie publikuje: **Preč z domu** (switch), **Nočný útlm – režim**
+a **Preč z domu – režim** (selecty off/advise/control), stav a ďalšiu zmenu nočného útlmu, fázu a aktívny posun tarify,
+**Zdravie čerpadla** (+ binárny senzor „problém“), **Odhad nákladov do konca mesiaca** a verziu aplikácie / dostupnú aktualizáciu.
+Príkazy z Home Assistanta sa prijímajú **len pri `MQTT_OVLADANIE=1`** v `config.env` (predvolene `0`: ovládacie prvky sú iba senzory),
+nikdy pri `DRY_RUN=1` a prechádzajú rovnakými kontrolami ako web (A/B test, režimy); v logu sú ako „Home Assistant (MQTT)“.
+`MQTT_PUB=0` neposiela nič. Príklad – preč, keď všetci odídu:
+
+```yaml
+automation:
+  - alias: "Kúrenie: preč"
+    trigger: {platform: numeric_state, entity_id: zone.home, below: 1, for: "01:00:00"}
+    action: {service: switch.turn_on, target: {entity_id: switch.kurenie_tc_away}}
+  - alias: "Kúrenie: doma"
+    trigger: {platform: numeric_state, entity_id: zone.home, above: 0}
+    action: {service: switch.turn_off, target: {entity_id: switch.kurenie_tc_away}}
+```
 
 ## MCP server pre Claude
 
