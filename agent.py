@@ -12,7 +12,7 @@ import datetime, json, re, socket, sqlite3, threading, time, traceback, urllib.e
 import profil
 from common import (P, REF_NAME, REF_ROOM, ROOM_NAMES, ROOMS, S, SETTINGS, TARGET_ROOMS, adb, balance, cfg_int, day_bounds, day_summary,
                     dhw_intervals, get_state, get_targets, hour_stats, is_dry, load_cfg, local_midnight, set_state, tcq)
-import abtest, contacts, dhw, interventions, notify, temps, zdravie, tarifa, utlm
+import abtest, asistent, contacts, dhw, interventions, notify, temps, zdravie, tarifa, utlm
 import i18n
 from i18n import tr
 
@@ -819,7 +819,7 @@ def learn(cfg, c):
             _p("today", ml) + time.strftime("%d.%m.%Y"), _p("season", ml) + _p("season." + contacts.season(c), ml), "", _p("h_days_n", ml, n=n), table,
             "", _p("h_changes", ml), changes_text(cfg, c, lang=ml),
             "", _p("h_msgs30", ml), messages_text(c, 30, 60, ml),
-            "", _p("h_interv", ml), interventions.llm_text(c, lang=ml),
+            "", _p("h_interv", ml), asistent.with_line(cfg, c, interventions.llm_text(c, lang=ml), None, ml),
             "", _p("h_targets_min", ml), targets_text(c, ml),
             "", _p("h_old_lessons", ml), "\n".join("- " + x for x in old) or _p("first_learning", ml),
             "", _p("h_last_analyses", ml),
@@ -1095,7 +1095,7 @@ def build_input(cfg, c, now, reasons=None, pre=None):
         "", _p("h_changes", ml), changes_text(cfg, c, lang=ml),
         "", _p("h_msgs14", ml), messages_text(c, lang=ml),
         "", _p("h_targets", ml, ref=REF_NAME), targets_text(c, ml),
-        "", _p("h_interv", ml), interventions.llm_text(c, now, ml),
+        "", _p("h_interv", ml), asistent.with_line(cfg, c, interventions.llm_text(c, now, ml), now, ml),
         "", _p("h_agent_changes", ml), "\n".join(actl) or _p("ziadne", ml),
         "", _p("h_prev_runs", ml), "\n".join(prevl) or _p("ziadne", ml),
         "", _p("h_notes", ml), "\n".join(notel) or _p("ziadne", ml),
@@ -1688,6 +1688,7 @@ def suhrn_data(cfg, c, tyzden, now=None):
     d["zasahy"] = c.execute("SELECT count(*) FROM interventions WHERE ts>=? AND ts<?", (a, b)).fetchone()[0]
     d["ventily"] = [{"ts": iv["ts"], "izba": iv["room"], "text": interventions.valve_line(iv, ml)}
                     for iv in reversed(interventions.list_items(c, 50, a, b, kind="ventil")) if iv["status"] != "zrusene"]
+    d["asistent"] = asistent.llm_line(cfg, c, now, ml)
     try:
         d["prepnutia_riadiacej"] = len(riadiaca_prepnutia(cfg, c, a, b)["zmeny"])
     except Exception:
@@ -1762,6 +1763,8 @@ def suhrn_text(d, lang="sk"):
     out.append(tr("srv.suhrn.agent", lang, z=d.get("zmeny_agenta") or 0, i=d.get("zasahy") or 0))
     if d.get("ventily"):
         out.append(tr("srv.suhrn.ventily", lang, v="; ".join(x["text"] for x in d["ventily"])))
+    if d.get("asistent"):
+        out.append(d["asistent"])
     if d.get("prepnutia_riadiacej") is not None:
         out.append(tr("srv.suhrn.riadiaca", lang, n=d["prepnutia_riadiacej"]))
     out.extend((d.get("porovnanie") or {}).get("riadky") or [])

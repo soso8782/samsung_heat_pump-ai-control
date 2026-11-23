@@ -815,6 +815,7 @@ svg.plot text.cml,.cplot text.cml{font-size:10.5px;fill:var(--ink-2)}
     <div id="porbox" hidden></div></section>
     <section class="panel pad adm" id="vlvpanel">
       <div class="head"><h2 data-i18n="izby.vlv_titul">Vyregulovanie ventilov</h2><span class="sub" data-i18n="izby.vlv_sub">Jedna zmena naraz; účinok na rozptyl teplôt izieb sa vyhodnotí po 24 a 48 hodinách</span></div>
+      <div id="vlvas" aria-live="polite" style="margin-bottom:14px"></div>
       <form id="vlvform" class="form" autocomplete="off">
         <div class="frow2">
           <div class="form"><label for="vlvroom" data-i18n="spolocne.izba">Izba</label><select id="vlvroom" required></select></div>
@@ -3397,10 +3398,26 @@ function vlvRow(it) {
 }
 async function loadValves() {
   const box = $("#vlvlist"); if (!box) return;
+  loadAsistent().catch(() => {});
   const r = await api("api/valves?limit=30"); if (!authed) return;
   if (r.error || !Array.isArray(r.items)) { box.innerHTML = `<div class="empty">${t("izby.vlv_zlyhalo")}</div>`; return; }
   box.innerHTML = r.items.length ? `<div class="tscroll"><table class="cmp"><thead><tr>${["datum", "izba", "zmena", "r24", "r48", "izba_d", "verdikt"].map(k => `<th>${t("izby.vlv_c_" + k)}</th>`).join("")}</tr></thead><tbody>${r.items.filter(x => x.status !== "zrusene").map(vlvRow).join("")}</tbody></table></div>` : `<div class="empty">${t("izby.vlv_ziadne")}</div>`;
 }
+let vlvRec = null;
+async function loadAsistent() {
+  const box = $("#vlvas"); if (!box) return;
+  const r = await api("api/ventily/odporucanie"); if (!authed) return;
+  if (r.error || !r.status) { box.innerHTML = `<div class="empty">${t("izby.as_zlyhalo")}</div>`; return; }
+  vlvRec = r;
+  const tbl = (r.rooms || []).length ? `<div class="tscroll"><table class="cmp"><caption class="sub">${t("izby.as_tabulka")}</caption><tbody>${r.rooms.map(x => `<tr><td>${esc(x.name)}</td><td>${f(x.mean, 1)} °C</td><td>${sg(x.dev, 1)}</td></tr>`).join("")}</tbody></table></div>` : "";
+  box.innerHTML = `<h3>${t("izby.as_titul")}</h3><p>${esc(r.headline)} ${esc(r.reason)} ${esc(r.effect || "")}</p>${(r.notes || []).map(x => `<p class="sub">${esc(x)}</p>`).join("")}` +
+    (r.step ? `<div class="btnrow"><button type="button" class="btn" id="vlvasbtn">${t("izby.as_zapisat")}</button></div>` : "") + tbl;
+}
+document.addEventListener("click", e => { if (!e.target.closest("#vlvasbtn") || !vlvRec || !vlvRec.step) return;
+  const s = vlvRec.step; $("#vlvroom").value = s.room; const sel = $("#vlvturns");
+  if ([...sel.options].some(o => o.value !== "custom" && +o.value === s.turns)) { sel.value = String(s.turns); $("#vlvcustom").hidden = true; }
+  else { sel.value = "custom"; $("#vlvcustom").hidden = false; $("#vlvcustom").value = String(s.turns).replace(".", ","); }
+  $("#vlvlabel").value = s.label || "VK 33"; $("#vlvnote").value = s.note || ""; say("#vlvmsg", t("izby.as_predvyplnene"), true); $("#vlvform").scrollIntoView({block: "nearest"}); });
 $("#vlvturns").onchange = () => { const c = $("#vlvturns").value === "custom"; $("#vlvcustom").hidden = !c; if (c) $("#vlvcustom").focus(); };
 $("#vlvlist").addEventListener("click", guard(async e => { const b = e.target.closest("[data-vlvcancel]"); if (!b) return;
   b.disabled = true; const r = await api("api/intervention_cancel", {id: +b.dataset.vlvcancel});
