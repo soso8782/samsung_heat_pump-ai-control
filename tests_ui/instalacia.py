@@ -46,6 +46,11 @@ SEED = textwrap.dedent('''
     c.executemany("INSERT INTO samples VALUES(?,?,?)", rows)
     c.commit(); c.close()
     stats.catch_up(cfg)
+    # spotreba celého domu (elektromer): bez nej je záložka Spotreba skrytá (funkcie.spotreba_domu = False)
+    import sqlite3 as _sq
+    sd = _sq.connect(stats._db_path(cfg))
+    sd.execute("UPDATE hourly SET kwh_dom = COALESCE(kwh, 0) + 0.35")
+    sd.commit(); sd.close()
     stats.fault_add(cfg, now - 86400, now - 86400 + 1800, "E101", "Test porucha", "Syntetická porucha pre test UI")
 ''')
 
@@ -72,7 +77,15 @@ class Instalacia:
             f.write("".join("%s=%s\n" % kv for kv in self.cfg.items()))
         ex = os.path.join(self.root, "profil.example.json")
         if os.path.exists(ex):
-            shutil.copy(ex, os.path.join(self.root, "profil.json"))
+            with open(ex, encoding="utf-8") as f:
+                prof = json.load(f)
+            # TÚV zapnutá (záložka TÚV sa inak skryje): entity ako v predvolenom profile
+            prof.setdefault("zariadenie", {})["tuv"] = True
+            ent = prof.setdefault("esp", {}).setdefault("entity", {})
+            ent["tuv"] = ent.get("tuv") or "Teplota TÚV (Bojler)"
+            ent["tuv_ciel"] = ent.get("tuv_ciel") or "Cieľová teplota TÚV"
+            with open(os.path.join(self.root, "profil.json"), "w", encoding="utf-8") as f:
+                json.dump(prof, f, ensure_ascii=False, indent=1)
         self.env = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1", TZ="Europe/Bratislava", TC_DB=self.cfg["TC_DB"], TC_PORT=str(self.mport))
         for k in ("DRY_RUN", "TC_ESP"):
             self.env.pop(k, None)

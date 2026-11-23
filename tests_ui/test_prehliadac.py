@@ -148,7 +148,10 @@ def open_app(browser, inst, cookie, locale):
 
 def visit_tab(zber, page, tab):
     zber.where = "záložka " + tab
-    page.click("#tabl-" + tab)
+    if not page.is_visible("#tabl-" + tab):
+        cls = page.get_attribute("#tabl-" + tab, "class") or ""
+        raise AssertionError("záložka %s nie je viditeľná (class=%r) – vypnutá funkcia v testovacej inštalácii?" % (tab, cls))
+    page.click("#tabl-" + tab, timeout=10000)
     page.wait_for_selector("#tab-%s:not([hidden])" % tab, timeout=10000)
     settle(page)
     check_text(zber, page, "#tab-" + tab, tab)
