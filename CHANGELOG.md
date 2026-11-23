@@ -2,6 +2,27 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/sk/1.1.0/), čísla verzií podľa [Semantic Versioning](https://semver.org/).
 
+## [2.16.0] – 2026-11-23
+
+### Pridané
+- **Bezpečný režim ESP (firmvér 2.16.0).** Keď regulácia nemá použiteľnú izbovú teplotu (ani zo záložného čidla) alebo je
+  odpojený Home Assistant dlhšie ako `bezpecny_po_h` (6 h; 0 = vypnuté), regulácia prestane zapisovať, posun krivky sa
+  po 0,5 °C každých 30 min vráti na 0 a uvoľní sa vypnutie kúrenia reguláciou. Po návrate teploty pokračuje bez skoku.
+  Binary_sensor „Bezpečný režim aktívny“, upozornenie vo webe, notifikácia správcovi pri začiatku a konci.
+  (Už doterajšia regulácia po 5 min bez teploty nastavuje posun 0; bezpečný režim pridáva viditeľnosť, upozornenia
+  a uvoľnenie kúrenia v režime vypínania.)
+- **Asistent vyregulovania** (`asistent.py`, panel Vyregulovanie ventilov): z odchýlok izieb za 7 dní a výsledkov
+  predošlých krokov odporučí jeden ďalší krok (¼/½ ot.), čakanie na vyhodnotenie, alebo „vyregulované“. Tlačidlo
+  predvyplní zápis. `GET /api/ventily/odporucanie`; odporúčanie aj v týždennom súhrne.
+- **Home Assistant cez MQTT** (`ha_ent.py`): prepínač Preč z domu, režimy útlmu a Preč, stav útlmu a ďalšej zmeny,
+  fáza a posun tarify, zdravie čerpadla (+ problém), odhad nákladov do konca mesiaca, verzia a dostupná aktualizácia.
+  Ovládanie z HA len pri `MQTT_OVLADANIE=1` (predvolene len stav), cez tie isté kontroly ako web.
+- **CI: test webu v prehliadači** (Playwright, všetky karty a pohľady štatistík ako správca aj používateľ, monitor)
+  a lokálny `test_js_deklaracie.py` (duplicitné deklarácie v JS).
+
+### Opravené
+- `test_zdravie.py` nezávisí od dnešného dátumu.
+
 ## [2.15.0] – 2026-11-23
 
 ### Pridané
