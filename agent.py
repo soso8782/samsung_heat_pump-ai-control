@@ -2167,6 +2167,11 @@ def main():
         ha_pub.start()
     except Exception:
         traceback.print_exc()
+    try:   # entity pre HA (Preč z domu, útlm, tarifa, zdravie, náklady) a príkazy z HA cez MQTT (ha_ent.py)
+        import ha_ent
+        ha_ent.start()
+    except Exception:
+        traceback.print_exc()
     while True:
         try:
             cfg = load_cfg()
