@@ -682,10 +682,14 @@ riadiaca_mapa = _agent_mod.riadiaca_mapa
 ZALOZNE_ENT = "Záložné čidlo aktívne"
 
 
-def zalozne_get(cfg, timeout=3):
-    """True, ak ESP riadi izbu podľa záložného čidla (binárny senzor „Záložné čidlo aktívne“); starší firmvér / chyba -> False."""
+BEZPECNY_ENT = "Bezpečný režim aktívny"
+
+
+def zalozne_get(cfg, timeout=3, ent=ZALOZNE_ENT):
+    """True, ak ESP riadi izbu podľa záložného čidla (binárny senzor „Záložné čidlo aktívne“); starší firmvér / chyba -> False.
+    S `ent` = BEZPECNY_ENT číta binárny senzor „Bezpečný režim aktívny“ (firmvér 2.16+)."""
     try:
-        url = "%s/binary_sensor/%s" % (cfg["ESP_URL"], urllib.parse.quote(ZALOZNE_ENT, safe=""))
+        url = "%s/binary_sensor/%s" % (cfg["ESP_URL"], urllib.parse.quote(ent, safe=""))
         with urllib.request.urlopen(url, timeout=timeout) as r:
             d = json.loads(r.read().decode("utf-8"))
         v = d.get("value")
@@ -705,7 +709,8 @@ def riadiaca_info(cfg, force=False):
         if opts:
             p = profil.load()
             mo = riadiaca_mapa(opts, p["izby"])
-            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p), "zalozne": zalozne_get(cfg)}
+            v = {"stav": stav, "moznosti": mo, "nesulad": _agent_mod.riadiaca_nesulad(stav, mo, p), "zalozne": zalozne_get(cfg),
+                 "bezpecny": zalozne_get(cfg, ent=BEZPECNY_ENT)}
     except Exception:
         v = None
     _riadiaca_cache.update(t=now, ttl=30 if v else 300, v=v)

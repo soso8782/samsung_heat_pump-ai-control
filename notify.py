@@ -16,7 +16,7 @@ except Exception:
     webpush = None
 
 # kind -> predvolený cooldown v sekundách (0 = bez obmedzenia)
-COOLDOWNS = {"agent_zmena": 0, "agent_problem": 3 * 3600, "agent_chyba": 6 * 3600, "zberac": 3 * 3600, "zberac_ok": 0, "cidlo": 0, "cidlo_ok": 0,
+COOLDOWNS = {"agent_zmena": 0, "agent_problem": 3 * 3600, "agent_chyba": 6 * 3600, "zberac": 3 * 3600, "zberac_ok": 0, "cidlo": 0, "cidlo_ok": 0, "bezpecny": 0, "bezpecny_ok": 0,
              "esp": 3 * 3600, "chyba_tc": 3600, "dohrev": 6 * 3600, "kredit": 24 * 3600, "vyhodnotenie": 0,
              "tyzden": 0, "suhrn": 0, "tuv": 6 * 3600, "test": 0, "abtest": 0, "zdravie": 0,
              "okno": 0,                # riadi si to contacts.check_notifications (pamäť v state, pripomienky)

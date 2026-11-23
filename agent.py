@@ -1045,6 +1045,11 @@ def build_input(cfg, c, now, reasons=None, pre=None):
             notel.insert(0, _p("riad_nesulad", ml, esp=nm.get(ns["esp_izba"], ns["esp_izba"]), profil=nm.get(ns["profil_izba"], ns["profil_izba"])))
     except Exception:
         pass
+    try:   # bezpečný režim ESP (dlhý výpadok izbovej teploty): len informácia
+        if _esp_val(cfg, "binary_sensor", BEZPECNY_ENT) is True:
+            notel.insert(0, _p("bezpecny", ml))
+    except Exception:
+        pass
     try:   # porovnanie riadiacich čidiel (len informácia; riadok iba ak ≥ 2 možnosti majú ≥ 48 h dát)
         import porovnanie
         pl = porovnanie.agent_line(cfg, ml, now)
@@ -1839,6 +1844,9 @@ CIDLO_TEXT = "Čakám na teplotu"          # text firmvéru v "Stav izbovej regu
 CIDLO_STAV_ENTITA = "Stav izbovej regulácie"
 
 
+BEZPECNY_ENT = "Bezpečný režim aktívny"   # binárny senzor ESP (firmvér 2.16+)
+
+
 def _esp_val(cfg, domain, name):
     return esp_get(cfg, domain, name).get("value")
 
@@ -2018,6 +2026,22 @@ def watchdog_tick(cfg, c, wd, now=None):
             if ok or e == "nenastavené":
                 set_state(c, "wd_cidlo_sent", "0")
 
+    def chk_bezpecny():
+        try:
+            on = _esp_val(cfg, "binary_sensor", BEZPECNY_ENT) is True
+        except Exception:
+            return                                  # ESP neodpovedá / starší firmvér: nehodnotené (výpadok ESP rieši chk_esp)
+        if on:
+            alerts["bezpecny"] = tr("srv.agent.bezpecny", hl)
+            if get_state(c, "wd_bezpecny_sent") != "1":      # jedno upozornenie na aktiváciu
+                ok, e = notify_("bezpecny", tr("srv.agent.bezpecny_t", hl), alerts["bezpecny"])
+                if ok or e == "nenastavené":
+                    set_state(c, "wd_bezpecny_sent", "1")
+        elif get_state(c, "wd_bezpecny_sent") == "1":
+            ok, e = notify_("bezpecny_ok", tr("srv.agent.bezpecny_ok_t", hl), tr("srv.agent.bezpecny_ok", hl))
+            if ok or e == "nenastavené":
+                set_state(c, "wd_bezpecny_sent", "0")
+
     def chk_runs():
         rows = c.execute("SELECT status, error FROM runs WHERE status NOT IN ('info','rutina') ORDER BY ts DESC LIMIT 3").fetchall()
         if len(rows) == 3 and all(r[0] == "chyba" for r in rows):
@@ -2052,6 +2076,7 @@ def watchdog_tick(cfg, c, wd, now=None):
     safe(chk_ha)
     safe(chk_esp)
     safe(chk_cidlo)
+    safe(chk_bezpecny)
     safe(chk_runs)
     safe(chk_credit)
     safe(lambda: dhw.tick(cfg, c, now))

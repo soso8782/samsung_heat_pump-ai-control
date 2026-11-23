@@ -104,6 +104,30 @@ class Cidlo(unittest.TestCase):
         self.assertNotIn("cidlo", self.tick(NOW))
         self.assertEqual(self.sent, [])
 
+    def test_bezpecny_rezim_jedno_upozornenie_a_koniec(self):
+        """Binárny senzor ESP „Bezpečný režim aktívny“: jedno upozornenie pri nástupe, jedno pri konci, poplach v alerts."""
+        stav = {"v": True}
+        def esp(cfg, dom, name):
+            if name != agent.BEZPECNY_ENT:
+                raise RuntimeError("bez siete")
+            if stav["v"] is None:
+                raise RuntimeError("ESP down")
+            return stav["v"]
+        with mock.patch.object(agent, "_esp_val", side_effect=esp):
+            al = self.tick(NOW); self.tick(NOW + 60)
+            self.assertIn("bezpecny", al)
+            self.assertEqual(self.kinds(), ["bezpecny"])
+            stav["v"] = None                      # ESP neodpovedá: nehodnotené, žiadne „skončil“
+            self.tick(NOW + 120)
+            self.assertEqual(self.kinds(), ["bezpecny"])
+            stav["v"] = False
+            al = self.tick(NOW + 180); self.tick(NOW + 240)
+            self.assertNotIn("bezpecny", al)
+            self.assertEqual(self.kinds(), ["bezpecny", "bezpecny_ok"])
+            stav["v"] = True
+            self.tick(NOW + 300)
+            self.assertEqual(self.kinds(), ["bezpecny", "bezpecny_ok", "bezpecny"])
+
 
 if __name__ == "__main__":
     unittest.main()
